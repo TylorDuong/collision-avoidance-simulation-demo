@@ -32,6 +32,12 @@ export const config = {
     maxDistance: 25,
   },
 
+  // Native iOS app (ios/): UWB ranging via Nearby Interaction, relayed through ws://<laptop>:<httpPort>/uwb.
+  uwb: {
+    sigma: 0.1, // m, measurement noise fed to the range filter
+    maxDistance: 30,
+  },
+
   calibration: {
     samples: 8,
     defaultDistance: 0.1, // m, phones held side by side

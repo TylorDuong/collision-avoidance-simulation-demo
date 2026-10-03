@@ -9,6 +9,7 @@ import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { Engine } from './engine.js';
 import { attachDevices } from './devices.js';
+import { attachUwb } from './uwb.js';
 import { loadOrCreateCerts, lanAddresses, ROOT_CA } from './certs.js';
 import { MSG, PHONE_IDS, decodeAudioFrame } from '../shared/protocol.js';
 
@@ -66,6 +67,8 @@ const httpServer = http.createServer((req, res) => {
 
 // ESP32 actuators connect over plain WS on the HTTP port (no TLS on the microcontroller).
 const devices = attachDevices({ server: httpServer, engine, token: config.deviceToken });
+// Native iOS app: UWB token relay + distance reports on ws://<laptop>:<httpPort>/uwb.
+attachUwb({ server: httpServer, engine });
 
 const wss = new WebSocketServer({ server: httpsServer, path: '/ws', perMessageDeflate: false });
 const dashboards = new Set();
@@ -141,5 +144,6 @@ httpsServer.listen(config.httpsPort, () => {
   }
   if (fs.existsSync(ROOT_CA)) for (const ip of ips) console.log(`Root CA:    http://${ip}:${config.httpPort}/ca`);
   for (const ip of ips) console.log(`ESP32:      ws://${ip}:${config.httpPort}/device`);
+  for (const ip of ips) console.log(`UWB app:    ws://${ip}:${config.httpPort}/uwb`);
 });
 httpServer.listen(config.httpPort);

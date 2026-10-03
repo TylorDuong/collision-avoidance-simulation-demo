@@ -10,6 +10,10 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
 };
 
+// ?silent=1: no microphone, no chirps. The server only starts ranging cycles once both
+// phones stream audio, so this leaves distance to GPS + motion (coarse; see README).
+const SILENT = new URLSearchParams(location.search).has('silent');
+
 let role = store.get('phone-role') === 'B' ? 'B' : 'A';
 let ctx = null;
 let chirpBuffer = null;
@@ -47,7 +51,7 @@ $('start').addEventListener('click', async () => {
   try {
     // Everything that needs a user gesture is started synchronously here, before any await.
     const AC = window.AudioContext || window.webkitAudioContext;
-    try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch { /* Safari < 16.4 */ }
+    if (!SILENT) try { if (navigator.audioSession) navigator.audioSession.type = 'play-and-record'; } catch { /* Safari < 16.4 */ }
     ctx = new AC({ latencyHint: 'interactive' });
     const resumed = ctx.resume();
     const motionPerm = typeof DeviceMotionEvent?.requestPermission === 'function' ? DeviceMotionEvent.requestPermission() : 'granted';
@@ -56,11 +60,13 @@ $('start').addEventListener('click', async () => {
     if ((await motionPerm) !== 'granted' || (await orientPerm) !== 'granted') {
       throw new Error('Motion & orientation access was denied. Allow it in Safari settings for this site, then reload.');
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
-    });
-    await resumed;
-    await startAudio(stream);
+    if (!SILENT) {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+      });
+      await resumed;
+      await startAudio(stream);
+    }
     startMotion();
     startGps();
     await requestWakeLock();
@@ -212,12 +218,12 @@ function renderStatus() {
   lastCounts = { motion: counters.motion, audio: counters.audio, at: now };
 
   $('s-conn').textContent = status.conn;
-  $('s-audio').textContent = `${ctx.sampleRate} Hz · ${audioHz} chunks/s${counters.dropped ? ` · ${counters.dropped} dropped` : ''}`;
+  $('s-audio').textContent = SILENT ? 'off (silent mode)' : `${ctx.sampleRate} Hz · ${audioHz} chunks/s${counters.dropped ? ` · ${counters.dropped} dropped` : ''}`;
   $('s-motion').textContent = latest.orientation ? `${motionHz} Hz` : 'waiting…';
   $('s-gps').textContent = status.gps;
   $('s-chirp').textContent = status.chirp;
 
-  const warn = ctx.state !== 'running' ? 'Audio is suspended. Tap the screen.' : motionHz === 0 && latest.orientation === null ? 'No motion data yet.' : '';
+  const warn = !SILENT && ctx.state !== 'running' ? 'Audio is suspended. Tap the screen.' : motionHz === 0 && latest.orientation === null ? 'No motion data yet.' : '';
   $('run-warning').textContent = warn;
   $('run-warning').hidden = !warn;
 }

@@ -1,0 +1,33 @@
+name: iOS build
+
+# Builds the UWB Ranger app as an unsigned .ipa. Download the artifact from the run and
+# sign/install it from Windows with Sideloadly (free Apple ID). See ios/README.md.
+on:
+  workflow_dispatch:
+  push:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build unsigned app
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project UWBRanger.xcodeproj -scheme UWBRanger -configuration Release \
+            -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package .ipa
+        working-directory: ios
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/UWBRanger.app Payload/
+          zip -qr UWBRanger.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UWBRanger-ipa
+          path: ios/UWBRanger.ipa

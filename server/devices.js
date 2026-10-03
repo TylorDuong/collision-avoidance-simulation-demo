@@ -18,7 +18,13 @@ import { WebSocketServer } from 'ws';
 import { MSG } from '../shared/protocol.js';
 
 export function attachDevices({ server, engine, path = '/device', token = null, heartbeatMs = 2000 }) {
-  const wss = new WebSocketServer({ server, path, perMessageDeflate: false });
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+  // Several WebSocket endpoints share this HTTP server, so each claims only its own path
+  // (a path-filtered WebSocketServer would otherwise abort the others' upgrades).
+  server.on('upgrade', (req, socket, head) => {
+    if (new URL(req.url, 'http://x').pathname !== path) return;
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
   const devices = new Map(); // ws -> info
   const epoch = randomInt(1, 2 ** 31);
   let seq = 0;

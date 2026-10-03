@@ -4,3 +4,9 @@ certs/
 data/
 *.log
 firmware/**/secrets.h
+
+# iOS build output
+ios/*.xcodeproj
+ios/build/
+ios/Payload/
+ios/*.ipa

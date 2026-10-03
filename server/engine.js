@@ -61,6 +61,8 @@ export class Engine {
     this.calibrated = false;
     this.calibration = { state: 'idle', target: null, raws: [] };
     this.lastAcoustic = null; // { t, raw, distance, snr }
+    this.lastUwb = null; // { t, id, distance, direction, accepted }
+    this.uwbPhones = () => ({ A: false, B: false }); // replaced by server/uwb.js with live connection state
     this.lastGpsUsedAt = -Infinity;
     this.lastPingAt = -Infinity;
     this.threat = { threat: 'other', level: 0, reason: 'no-data', ttc: null };
@@ -187,6 +189,20 @@ export class Engine {
     this.lastAcoustic = { t: m.t, raw: m.raw, distance, snr: m.snr, accepted: res.accepted };
   }
 
+  /**
+   * Distance from the native iOS app's UWB session (Nearby Interaction). Either phone's
+   * report is valid; both measure the same A<->B distance.
+   * @param {'A'|'B'} id
+   * @param {{ distance: number, direction?: number[] | null }} m metres, direction in the reporting phone's frame
+   */
+  handleUwb(id, { distance, direction = null }) {
+    if (!Number.isFinite(distance) || distance < 0 || distance > this.cfg.uwb.maxDistance) return;
+    const t = this.now();
+    // The app sends no motion data, so assume movement: the filter then follows quick changes.
+    const res = this.filter.update(distance, this.cfg.uwb.sigma ** 2, t, { moving: true });
+    this.lastUwb = { t, id, distance, direction, accepted: res.accepted };
+  }
+
   _maybeUseGps() {
     const t = this.now();
     const { A, B } = this.phones;
@@ -205,6 +221,7 @@ export class Engine {
   _rangeSource(t) {
     if (!this.filter.initialized) return 'none';
     if (t - this.filter.t > this.cfg.filter.staleAfter) return 'stale';
+    if (this.lastUwb && t - this.lastUwb.t < 1) return 'uwb';
     if (this.lastAcoustic && t - this.lastAcoustic.t < 1) return 'acoustic';
     if (t - this.lastGpsUsedAt < 3) return 'gps';
     return 'predicted';
@@ -281,6 +298,10 @@ export class Engine {
         successRate: this.ranging.successRate(),
         lastFailure: this.ranging.stats.lastFailure,
         running: this.ranging.ready(),
+      },
+      uwb: {
+        last: this.lastUwb ? { ageMs: Math.round((t - this.lastUwb.t) * 1000), distance: this.lastUwb.distance, from: this.lastUwb.id, accepted: this.lastUwb.accepted } : null,
+        phones: this.uwbPhones(),
       },
       threat: { level: this.threat.threat, reason: this.threat.reason },
       // TCAS-style traffic picture: phone A is "own ship", B is traffic.

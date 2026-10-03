@@ -1,0 +1,26 @@
+name: UWBRanger
+options:
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  UWBRanger:
+    type: application
+    platform: iOS
+    sources: [UWBRanger]
+    info:
+      path: UWBRanger/Info.plist
+      properties:
+        CFBundleDisplayName: UWB Ranger
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSNearbyInteractionUsageDescription: Measures the distance to the other phone with ultra-wideband.
+        NSLocalNetworkUsageDescription: Talks to the demo server on your laptop's hotspot.
+        # The server is plain ws:// on a LAN IP.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.proxdemo.uwbranger
+        SWIFT_VERSION: "5.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
