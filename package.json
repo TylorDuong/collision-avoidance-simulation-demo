@@ -1,0 +1,28 @@
+{
+  "name": "collision-avoidance-simulation-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser-only phone proximity / collision-warning prototype: acoustic ranging + motion sensors + GPS, fused on a laptop and shown in 3D and TCAS-style views.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "vite build",
+    "watch": "vite build --watch",
+    "start": "node server/index.js",
+    "dev": "node scripts/dev.js",
+    "mock": "node tools/mock-phones.js",
+    "certs": "node scripts/make-certs.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "fft.js": "^4.0.4",
+    "selfsigned": "^5.5.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "three": "^0.186.1",
+    "vite": "^8.3.2"
+  }
+}
