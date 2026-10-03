@@ -3,3 +3,4 @@ web/dist/
 certs/
 data/
 *.log
+firmware/**/secrets.h

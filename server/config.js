@@ -5,6 +5,10 @@ export const config = {
   // Plain-HTTP port: serves the root CA for iPhone install and redirects everything else to HTTPS.
   httpPort: Number(process.env.HTTP_PORT) || 8080,
 
+  // ESP32 / microcontroller actuators: ws://<laptop-ip>:<httpPort>/device.
+  // Set DEVICE_TOKEN to require the same token in the device's hello.
+  deviceToken: process.env.DEVICE_TOKEN || null,
+
   tickHz: 60,
   stateBroadcastHz: 30,
   pingIntervalMs: 1000,

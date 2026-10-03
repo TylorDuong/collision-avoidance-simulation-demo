@@ -23,6 +23,7 @@ const conn = connect({
 });
 const hud = createHud($('hud'), {
   onCalibrate: (distance) => conn.send({ t: MSG.CALIBRATE, distance }),
+  onDeviceTest: (id) => conn.send({ t: MSG.DEVICE_TEST, id, ms: 1000 }),
 });
 
 // ---- views ------------------------------------------------------------------------

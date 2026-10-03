@@ -29,6 +29,10 @@ export const MSG = {
   STATE: 'state',
   // dashboard -> server
   CALIBRATE: 'calibrate', // { distance }
+  DEVICE_TEST: 'deviceTest', // { id?, ms? } — pulse an actuator's RA output
+  // actuator device <-> server (see server/devices.js)
+  APPLIED: 'applied', // device -> server { level, mechanism }
+  TEST: 'test', // server -> device { ms }
 };
 
 export const AUDIO_MAGIC = 0x41;

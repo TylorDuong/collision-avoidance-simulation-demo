@@ -4,6 +4,8 @@ A real-time prototype that measures the distance between two iPhones, tracks the
 
 There's no native app. The phones open a web page served by the laptop. They work as "dumb" sensor nodes: they stream raw motion, GPS and microphone audio. The laptop does all the signal processing, fusion and collision logic.
 
+**New here?** Follow the step-by-step [setup guide](docs/SETUP.md): simulation first, then the hotspot, the ESP32 boards and the phones.
+
 ## How it works
 
 ```
@@ -106,6 +108,53 @@ The TCAS view is currently a framework. Planned iterations are tracked in `web/d
 
 To add a view, implement `{ mount, update, resize, unmount }` and register it in `web/dashboard/views/index.js`.
 
+## ESP32 actuators (LED / mechanism) with ESP-NOW relay
+
+Two ESP32 boards join the **laptop's hotspot**. Each one opens a WebSocket to the server and gets the threat level from it. The boards also talk directly to each other over **ESP-NOW**:
+
+```
+iPhones ─┐
+         ├─ laptop hotspot (2.4 GHz) ─▶ server ──WebSocket──▶ ESP32 A ⇄ ESP-NOW ⇄ ESP32 B ◀──WebSocket── server
+```
+
+- **Server → boards:** `{t:'alert', level, range, seq, epoch}`, sent the moment the level changes and again every second. `seq` counts up with every send. `epoch` identifies the server run.
+- **Heartbeat:** each board broadcasts a 38-byte ESP-NOW beacon every 200 ms. If a board hears nothing from its peer for 1 s, it marks the peer **lost**. The loss shows on the LED and is reported to the dashboard.
+- **Relay:** each beacon carries the sender's latest alert. A board always uses the newest copy, judged by `seq` within the same `epoch`, whether that copy came from the server or from its peer. If one board's WebSocket drops, it keeps following alerts through the other board, with a few milliseconds of extra delay.
+- **Fail-safe:** if a board has no fresh alert from either path for 2.5 s, it turns the mechanism off and double-blinks. That happens if the hotspot or the PC goes down, since nothing is measuring distance anymore.
+- **Shared channel:** ESP-NOW shares the radio with Wi-Fi, so it runs on the hotspot's channel. While a board is reconnecting, it retries on that channel instead of scanning all channels, so it can still hear its peer. Every 6th retry scans all channels, in case the hotspot changed channel.
+
+| Board state | LED | Mechanism output |
+|---|---|---|
+| other | off (short blip every 2 s if the peer is lost) | off |
+| proximate | slow blink | off |
+| TA | fast blink | off |
+| RA | solid | **on** (held at least 0.5 s, cut off after 5 s) |
+| no fresh alert for 2.5 s | double blink | off (fail-safe) |
+
+**Wiring** (the same on both boards; pins are set at the top of the sketch):
+
+```
+GPIO2  ── onboard LED (or GPIO → 220 Ω → LED → GND)
+GPIO26 ── relay module IN  or  logic-level N-MOSFET gate (100 Ω series, 10 kΩ to GND)
+           MOSFET drain → load (−), load (+) → external supply, flyback diode across inductive loads
+GND    ── common ground with the external supply
+```
+
+Never power a motor, solenoid or relay coil straight from a GPIO pin. Use a relay module or a MOSFET with its own supply. Many relay modules are active-LOW; for those, set `MECH_ACTIVE_HIGH = false`.
+
+**Setup:**
+1. **Hotspot:** on the laptop, go to Settings › Network & internet › Mobile hotspot. Set the band to **2.4 GHz**, because a standard ESP32 can't join 5 GHz, and turn the hotspot on. Connect both iPhones to it too. The laptop's address on its own hotspot is normally `192.168.137.1`. The server prints it at startup. Turn the hotspot on **before** running `npm run certs`, so the phones' certificate includes the hotspot address.
+2. **Arduino IDE:** install the **esp32** board package by Espressif. Then use the Library Manager to install **WebSockets** (Markus Sattler) and **ArduinoJson** (v7).
+3. **Secrets:** copy `firmware/esp32-actuator/secrets.example.h` to `secrets.h`, which git ignores. Fill in the hotspot name and password and the laptop's hotspot IP. Use the **same `GROUP_ID`** on both boards and a **different `DEVICE_ID`** on each, e.g. `esp32-A` and `esp32-B`.
+4. **Upload:** select **ESP32 Dev Module** and upload to each board, changing `DEVICE_ID` between uploads. Serial Monitor at 115200 baud shows Wi-Fi, ESP-NOW, alerts and peer status.
+5. **Run:** start the server with `npm start` and make sure port 8080 is allowed through the firewall. Both boards appear in the dashboard's **Actuators** card with their alert source (`server` or `peer`) and ESP-NOW peer status. A board whose server link is down still shows up through its peer. **Test** pulses that board's RA output for 1 s.
+
+Optional: run the server with `DEVICE_TOKEN=<secret>` and put the same value in `secrets.h` to reject unknown devices.
+
+**Testing without hardware:** `npm run mock:esp32` simulates both boards, using the same relay and heartbeat rules over an in-memory radio:
+- `npm run mock:esp32 -- --drop-ws esp32-B@5-15` cuts B's WebSocket from 5 s to 15 s. Watch B switch to "alert via peer".
+- `npm run mock:esp32 -- --drop-peer 20-30` silences ESP-NOW from 20 s to 30 s, so both boards report their peer as lost.
+
 ## Threat logic
 
 Levels follow TCAS naming. A level triggers on distance **or** time-to-collision, whichever comes first. The defaults are in `server/config.js`:
@@ -128,6 +177,7 @@ server/
   ranging/       audio ring buffer + FFT matched filter, BeepBeep, ranging cycle scheduler
   fusion/        range Kalman filter, orientation, motion activity, GPS, clock sync
   collision.js   threat levels with hysteresis
+  devices.js     ESP32 actuator WebSocket endpoint (/device on the HTTP port)
   config.js      all tunables
 web/
   phone/         sensor page (+ public/phone/capture-worklet.js AudioWorklet)
@@ -135,6 +185,9 @@ web/
 tools/
   sim/world.js   simulated acoustic world (clocks, latencies, propagation, noise, echo)
   mock-phones.js two simulated phones over WebSocket
+  mock-esp32.js  simulated ESP32 actuator
+firmware/
+  esp32-actuator Arduino sketch: Wi-Fi + WebSocket client driving an LED and a relay/MOSFET
 test/            node:test unit + end-to-end simulation tests
 ```
 

@@ -5,7 +5,7 @@ const REASON_TEXT = { range: 'inside distance threshold', ttc: 'time-to-collisio
 
 const fmt = (v, digits = 2, unit = '') => (v === null || v === undefined || Number.isNaN(v) ? '—' : `${v.toFixed(digits)}${unit}`);
 
-export function createHud(root, { onCalibrate }) {
+export function createHud(root, { onCalibrate, onDeviceTest }) {
   root.innerHTML = `
     <section class="card threat" data-level="other">
       <h2>Threat</h2>
@@ -50,6 +50,10 @@ export function createHud(root, { onCalibrate }) {
           </div>`).join('')}
       </div>
     </section>
+    <section class="card">
+      <h2>Actuators</h2>
+      <div class="devices" data-k="devices"><p class="note">No ESP32 connected.</p></div>
+    </section>
     <section class="card calib">
       <h2>Calibration</h2>
       <p class="note">Hold the phones side by side, speakers and mics uncovered, at the distance below. Then press Calibrate.</p>
@@ -72,6 +76,53 @@ export function createHud(root, { onCalibrate }) {
   };
 
   el['cal-btn'].addEventListener('click', () => onCalibrate(Number(el['cal-d'].value)));
+  el.devices.addEventListener('click', (e) => {
+    const id = e.target.closest('[data-test]')?.dataset.test;
+    if (id) onDeviceTest(id);
+  });
+  let devicesKey = '';
+
+  function renderDevices(list = []) {
+    const key = JSON.stringify(list);
+    if (key === devicesKey) return;
+    devicesKey = key;
+    el.devices.replaceChildren();
+    if (!list.length) {
+      el.devices.innerHTML = '<p class="note">No ESP32 connected.</p>';
+      return;
+    }
+    for (const d of list) {
+      const row = document.createElement('div');
+      row.className = 'device';
+      const kv = (pairs) => pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+      const esc = (v) => String(v ?? '—').replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+      if (d.connected) {
+        const peer = d.peer
+          ? `${esc(d.peer.id)} · ${d.peer.alive ? `alive${d.peer.rssi ? ` ${d.peer.rssi} dBm` : ''}` : 'LOST'}`
+          : 'none heard';
+        row.innerHTML = `
+          <header><i class="dot" data-on="true"></i><span></span><button class="btn" data-test="">Test</button></header>
+          <dl class="kv">${kv([
+            ['ip', esc((d.ip ?? '').replace(/^::ffff:/, ''))],
+            ['applied', esc(d.applied)],
+            ['alert via', esc(d.source)],
+            ['mechanism', d.mechanism ? 'ON' : 'off'],
+            ['ESP-NOW peer', peer],
+          ])}</dl>`;
+        row.querySelector('[data-test]').dataset.test = d.id;
+      } else {
+        // Board known only through its peer's ESP-NOW reports: its WebSocket is down.
+        row.innerHTML = `
+          <header><i class="dot" data-on="false"></i><span></span></header>
+          <dl class="kv">${kv([
+            ['server link', 'down'],
+            ['ESP-NOW', `${d.peerAlive ? 'alive' : 'LOST'} (via ${esc(d.seenBy)})`],
+          ])}</dl>`;
+      }
+      row.querySelector('header span').textContent = d.id;
+      el.devices.append(row);
+    }
+  }
 
   return {
     update(s, age) {
@@ -106,6 +157,8 @@ export function createHud(root, { onCalibrate }) {
         set(`${id}-moving`, p.connected ? (p.moving ? 'moving' : 'still') : '—');
         set(`${id}-north`, p.connected ? (p.northAligned ? 'aligned' : 'no compass') : '—');
       }
+
+      renderDevices(s.devices);
 
       const c = s.calibration;
       set('cal-state', c.state === 'collecting' ? `collecting ${Math.round(c.progress * 100)}%` : c.calibrated ? 'calibrated' : 'default K');

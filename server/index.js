@@ -8,6 +8,7 @@ import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { config } from './config.js';
 import { Engine } from './engine.js';
+import { attachDevices } from './devices.js';
 import { loadOrCreateCerts, lanAddresses, ROOT_CA } from './certs.js';
 import { MSG, PHONE_IDS, decodeAudioFrame } from '../shared/protocol.js';
 
@@ -63,6 +64,9 @@ const httpServer = http.createServer((req, res) => {
   res.writeHead(302, { location: `https://${host}:${config.httpsPort}${req.url}` }).end();
 });
 
+// ESP32 actuators connect over plain WS on the HTTP port (no TLS on the microcontroller).
+const devices = attachDevices({ server: httpServer, engine, token: config.deviceToken });
+
 const wss = new WebSocketServer({ server: httpsServer, path: '/ws', perMessageDeflate: false });
 const dashboards = new Set();
 const phoneSockets = new Map();
@@ -104,6 +108,8 @@ wss.on('connection', (ws, req) => {
     else if (role === 'dashboard' && msg.t === MSG.CALIBRATE) {
       const d = Number(msg.distance);
       engine.calibrate(Number.isFinite(d) && d > 0 ? d : undefined);
+    } else if (role === 'dashboard' && msg.t === MSG.DEVICE_TEST) {
+      devices.test(msg.id, Math.min(5000, Math.max(100, Number(msg.ms) || 1000)));
     }
   });
 
@@ -122,7 +128,7 @@ engine.on('alert', (now, prev) => console.log(`threat ${prev} -> ${now.threat} (
 setInterval(() => engine.tick(), 1000 / config.tickHz);
 setInterval(() => {
   if (!dashboards.size) return;
-  const json = JSON.stringify(engine.getState());
+  const json = JSON.stringify({ ...engine.getState(), devices: devices.list() });
   for (const ws of dashboards) if (ws.readyState === ws.OPEN) ws.send(json);
 }, 1000 / config.stateBroadcastHz);
 
@@ -134,5 +140,6 @@ httpsServer.listen(config.httpsPort, () => {
     console.log(`Phones:     https://${ip}:${config.httpsPort}/phone`);
   }
   if (fs.existsSync(ROOT_CA)) for (const ip of ips) console.log(`Root CA:    http://${ip}:${config.httpPort}/ca`);
+  for (const ip of ips) console.log(`ESP32:      ws://${ip}:${config.httpPort}/device`);
 });
 httpServer.listen(config.httpPort);

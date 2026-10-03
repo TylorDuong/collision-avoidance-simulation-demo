@@ -14,7 +14,8 @@
     "dev": "node scripts/dev.js",
     "mock": "node tools/mock-phones.js",
     "certs": "node scripts/make-certs.js",
-    "test": "node --test"
+    "test": "node --test",
+    "mock:esp32": "node tools/mock-esp32.js"
   },
   "dependencies": {
     "fft.js": "^4.0.4",
