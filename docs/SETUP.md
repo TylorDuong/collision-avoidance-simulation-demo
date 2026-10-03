@@ -51,7 +51,17 @@ Stop all three terminals with Ctrl+C. Don't run `mock:esp32` once the real board
 1. Go to Settings → Network & internet → **Mobile hotspot**.
 2. Click **Edit** and set a name, a password, and **Band: 2.4 GHz**. The ESP32 can't see 5 GHz networks.
 3. Turn the hotspot **On**. Windows usually needs the laptop itself connected to the internet (school Wi-Fi or Ethernet) to allow this.
-4. Run `ipconfig` and find the adapter named like "Local Area Connection* 10". Its IPv4 address is usually **192.168.137.1**. Write it down; it's the laptop's address on your hotspot.
+4. Run `ipconfig` and find the adapter named like `Local Area Connection* 2`. The `*` and the number vary by machine, and newer Windows versions may call it `Microsoft Wi-Fi Direct Virtual Adapter`. Its IPv4 address is usually **192.168.137.1**. Write it down; it's the laptop's address on your hotspot, and it goes in `SERVER_HOST` and in the phone URLs.
+
+   ```
+   Wireless LAN adapter Local Area Connection* 2:      <- the hotspot
+      IPv4 Address. . . . . . . . . . . : 192.168.137.1   <- use this one
+
+   Wireless LAN adapter Wi-Fi:                         <- your normal internet connection
+      IPv4 Address. . . . . . . . . . . : 192.168.0.136   <- ignore this one
+   ```
+
+   Adapters that say "Media disconnected" are inactive; ignore them. If no adapter shows `192.168.137.x`, the hotspot isn't on. Leave any VPN (e.g. Surfshark) off while using the hotspot, because it can interfere with connection sharing.
 
 ### 2.2 Open the firewall (admin PowerShell, one time)
 
@@ -262,6 +272,7 @@ The safety timing lives at the top of the sketch:
 | Wi-Fi works but no `[ws] connected` | Wrong `SERVER_HOST`, server not running, or the firewall rule missing for port 8080 |
 | Peers never see each other | Different `GROUP_ID`s, the same `DEVICE_ID` on both boards, or one board not on the hotspot |
 | Hotspot toggle greyed out | The laptop needs its own internet connection; otherwise use a cheap travel router |
+| `npm run certs` says "mkcert was not found on PATH" | Install it with `winget install FiloSottile.mkcert` (or `choco install mkcert`), then **close and reopen the terminal** and run it again |
 | Phone page says it needs HTTPS / certificate error | Redo the certificate trust steps. If the hotspot was off during `npm run certs`, run it again with the hotspot on. |
 | Board resets when the mechanism fires | The load is pulling power from the ESP32. Give it its own supply, with a shared GND. |
 
