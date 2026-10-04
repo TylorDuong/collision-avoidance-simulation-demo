@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AdvisoryTracker, resolveSense } from '../web/dashboard/views/tcas/advisories.js';
-import { formatRelAlt, formatNoBearing, trendGlyph, UNITS } from '../web/dashboard/views/tcas/symbols.js';
+import { formatRelAlt, formatNoBearing, trendGlyph, rangeRings, UNITS } from '../web/dashboard/views/tcas/symbols.js';
 
 const traffic = (threat, relAlt = null, extra = {}) => [{ id: 'B', range: 1, bearing: null, relAlt, relAltRate: null, threat, ...extra }];
 
@@ -75,4 +75,19 @@ test('data tag and no-bearing formatting', () => {
   assert.equal(trendGlyph(-0.3), '↓');
   assert.equal(formatNoBearing({ threat: 'RA', range: 0.284, relAlt: null, relAltRate: null }), 'RA 0.28');
   assert.equal(formatNoBearing({ threat: 'TA', range: 0.61, relAlt: 0.2, relAltRate: -0.2 }), 'TA 0.61 +02↓');
+});
+
+test('range rings: several evenly spaced rings, the last at the selected range', () => {
+  assert.deepEqual(rangeRings(20), [5, 10, 15, 20]);
+  assert.deepEqual(rangeRings(10), [2.5, 5, 7.5, 10]);
+  assert.deepEqual(rangeRings(5), [1, 2, 3, 4, 5]);
+  assert.deepEqual(rangeRings(40), [10, 20, 30, 40]);
+  assert.deepEqual(rangeRings(1), [0.25, 0.5, 0.75, 1]); // phones, metres
+  for (const r of [...UNITS.airspace.ranges, ...UNITS.phones.ranges]) {
+    const rings = rangeRings(r);
+    assert.ok(rings.length >= 3 && rings.length <= 5, `${r}: ${rings}`);
+    assert.equal(rings.at(-1), r);
+    const step = rings[0];
+    rings.forEach((v, i) => assert.ok(Math.abs(v - (i + 1) * step) < 1e-9, `${r}: uneven ${rings}`));
+  }
 });

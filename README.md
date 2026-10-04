@@ -90,7 +90,7 @@ npm run mock -- --rate 2              # run the scenario twice as fast
 
 ## Dashboard
 
-- **Dual TCAS (A POV and B POV):** two side-by-side displays. Each node is own ship on its own display and sees the other as traffic. Each display follows the combined TCAS traffic/RA instrument (IVSI) in the TCAS II v7.1 intro booklet (`docs/`, Fig. 2 and Fig. 3):
+- **Dual TCAS (A POV and B POV):** two side-by-side displays. Each node is own ship on its own display and sees the other as traffic. Each display is a heading-up navigation display with TCAS traffic, following the TCAS II v7.1 intro booklet (`docs/`, Fig. 2 and Fig. 3):
 
   | Symbol | Meaning |
   |---|---|
@@ -102,10 +102,12 @@ npm run mock -- --rate 2              # run the scenario twice as fast
 
   - **Traffic:** each aircraft is drawn at its range and relative bearing. A TA or RA beyond the selected range becomes a half symbol at the edge, plus an amber or red `TRAFFIC` annunciation.
   - **Data tag:** relative altitude as a signed two-digit number in hundreds of feet (proximity mode: 0.1 m). It sits above the symbol when traffic is above and below it when traffic is below, and is omitted without altitude reporting. A trend arrow appears to the right of the symbol when the target climbs or descends faster than 500 fpm.
-  - **Rim:** a vertical speed scale in thousands of fpm (`0 .5 1 2 4 6`, with 0 at 9 o'clock), with the own-ship needle. During an RA, red arcs mark the rates to avoid and a green arc marks the rate to fly (Climb RA: green 1500–2000 fpm, red below 1500). Descend is the mirror image.
-  - **Range markings:** a ring of 12 dots at half scale and a thin ring at full scale, with the selected range boxed. Range buttons: 5, 10, 20 or 40 NM (proximity mode: 1, 2, 5 or 10 m).
+  - **Rim:** a heading-up compass rose, like a navigation display. It turns with own heading under a fixed lubber triangle and a `HDG` readout (`TRU` in the TCAS demo, `MAG` for the phone compass). Labels are tens of degrees (`09` = 090°), with 5° and 10° ticks.
+  - **Route:** own flight plan in green (TCAS demo only): course line, waypoint stars and names from the FROM waypoint on, the active leg brighter and the active waypoint filled. Waypoints come from `perspective.nav` and are never treated as traffic.
+  - **Vertical speed tape:** right edge, in thousands of fpm (`.5 1 2 4 6`), with the own-ship pointer, V/S above and altitude below. During an RA, red bands mark the rates to avoid and a green band marks the rate to fly (Climb RA: green 1500–2000 fpm, red below 1500). Descend is the mirror image.
+  - **Range rings:** 3–5 thin dashed rings around own ship at round fractions of the selected range (20 NM: 5, 10, 15, 20), each labelled on the upper-left ray, the outermost with its unit. The selected range is also boxed. Rings, route and traffic share one scale, so they rescale together. Range buttons: 5, 10, 20 or 40 NM (proximity mode: 1, 2, 5 or 10 m).
   - **Altitude filter:** `ABV` shows +9900/−2700 ft, `N` (normal) ±2700 ft, `BLW` +2700/−9900 ft. TAs, RAs and traffic without altitude are always shown. Each POV remembers its range and filter.
-  - **Overlay:** own-ship data top-left and top-right (`GS`, `HDG`, `ALT`, `V/S`). The TCAS operating mode (`TA/RA`, `TA ONLY` or `TCAS STBY`) and the altitude display mode (`REL` plus the filter) are on the left.
+  - **Overlay:** top-left `GS`, `TAS`, wind (`270°/5`) and a downwind arrow. Top-right: active waypoint, course to it, distance and time to go (`A2 090°`, `2.4 NM`, `00:35`). Bottom-left: POV, TCAS operating mode (`TA/RA`, `TA ONLY` or `TCAS STBY`), status and the altitude display mode (`REL` plus the filter).
   - **No bearing:** an ultrasonic sensor has no bearing, so a TA or RA is written out as a no-bearing line (`RA 0.28 +02↓`), the way TCAS reports no-bearing advisories. No range ring is drawn.
   - **Banner:** a visual stand-in for the v7.1 aural annunciations. It reads `TRAFFIC, TRAFFIC`, then `CLIMB, CLIMB` or `DESCEND, DESCEND` (the sense comes from the own ship's TCAS and stays latched for the life of the RA), then `CLEAR OF CONFLICT` when the RA ends.
 - **3D:**

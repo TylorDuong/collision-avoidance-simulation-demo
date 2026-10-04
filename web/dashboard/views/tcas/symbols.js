@@ -76,6 +76,26 @@ export const UNITS = {
 
 const FONT = "'B612 Mono', ui-monospace, monospace";
 const known = (v) => v !== null && v !== undefined && !Number.isNaN(v);
+const RING_STEPS = [1, 2, 2.5, 5]; // × powers of ten
+
+/**
+ * Range ring distances, in display range units, for a selected range: evenly spaced at a
+ * round step that gives 3–5 rings (4 preferred), the last at full scale.
+ * 20 -> [5, 10, 15, 20], 10 -> [2.5, 5, 7.5, 10], 5 -> [1, 2, 3, 4, 5].
+ */
+export function rangeRings(scale) {
+  let best = null;
+  for (let e = -3; e <= 3; e++) {
+    for (const m of RING_STEPS) {
+      const step = m * 10 ** e;
+      const n = scale / step;
+      if (Math.abs(n - Math.round(n)) > 1e-9 || n < 3 || n > 5) continue;
+      if (!best || Math.abs(n - 4) < Math.abs(best.n - 4)) best = { step, n: Math.round(n) };
+    }
+  }
+  best ??= { step: scale / 4, n: 4 };
+  return Array.from({ length: best.n }, (_, i) => Number(((i + 1) * best.step).toPrecision(12)));
+}
 
 export function drawOwnship(ctx, x, y, size, color = TCAS_COLORS.ownship) {
   const s = size;
