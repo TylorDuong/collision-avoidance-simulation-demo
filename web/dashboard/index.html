@@ -13,6 +13,11 @@
     <header id="topbar">
       <div id="hud-primary" aria-label="Primary telemetry"></div>
       <nav id="tabs" role="tablist" aria-label="Views"></nav>
+      <div id="ui-size" role="group" aria-label="Interface size">
+        <button class="btn" data-ui="smaller" aria-label="Smaller interface" title="Smaller interface">−</button>
+        <button class="btn" data-ui="reset" aria-label="Reset interface size" title="Reset interface size">90%</button>
+        <button class="btn" data-ui="larger" aria-label="Larger interface" title="Larger interface">+</button>
+      </div>
       <div id="conn" class="pill" data-status="connecting">connecting</div>
     </header>
     <main id="cockpit" class="tab-panel" role="tabpanel" hidden>

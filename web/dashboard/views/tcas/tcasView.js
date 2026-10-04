@@ -70,6 +70,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
   let dpr = 1;
   let mode = null; // state.mode the range buttons were built for
   let units = UNITS.phones;
+  let ui = 1; // 0.55–1: how far the display's fixed chrome is shrunk to fit the current window
   let rangeScale = units.defaultRange;
   let altFilter = ['NORM', 'ABV', 'BLW'].includes(prefs.get(`tcas-alt-${ownId}`)) ? prefs.get(`tcas-alt-${ownId}`) : 'NORM';
   const advisories = new AdvisoryTracker();
@@ -382,7 +383,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     return vx + ctx.measureText(value).width;
   }
 
-  const line = (i, fs) => 24 + i * (fs + 9);
+  const line = (i, fs) => Math.round(24 * ui) + i * (fs + Math.round(9 * ui));
 
   // Top left: ground speed, true airspeed, wind (from / speed) and a downwind arrow.
   function drawFlightData(own, fs) {
@@ -425,12 +426,20 @@ export function createTcasView({ ownId = 'A' } = {}) {
     ctx.fillRect(0, 0, W, H);
     useMode(s?.mode ?? 'phones');
 
-    const R = Math.max(60, Math.min(W - 32 - 2 * SIDE, H - TOP - BOTTOM) / 2 / 1.04);
+    // The margins around the rose (data block above, status row and buttons below, vertical speed
+    // tape beside) are designed for a ~720 × 520 window. In a smaller window (or when the
+    // browser is zoomed in) they shrink with it, so the whole rose always fits and nothing
+    // is pushed past the edge of the canvas.
+    ui = Math.max(0.55, Math.min(1, W / 720, H / 520));
+    const top = TOP * ui;
+    const bottom = Math.max(BOTTOM * ui, (controls?.offsetHeight ?? 0) + 14); // keep clear of the range buttons
+    const side = SIDE * ui;
+    const R = Math.max(16, Math.min(W - 32 * ui - 2 * side, H - top - bottom) / 2 / 1.04);
     const cx = W / 2;
-    const cy = TOP + Math.max(R * 1.04, (H - TOP - BOTTOM) / 2);
+    const cy = top + (H - top - bottom) / 2;
     const Rt = R * 0.64; // full-scale radius of the traffic display
-    const sym = Math.max(10, Math.min(20, R * 0.065));
-    const fs = Math.max(11, Math.min(15, Math.round(W / 50)));
+    const sym = Math.max(8, Math.min(20, R * 0.065));
+    const fs = Math.max(9, Math.min(15, Math.round(W / 50), Math.round(15 * ui)));
 
     const now = info.now;
     const stale = !s || info.age > 2000;
@@ -467,22 +476,22 @@ export function createTcasView({ ownId = 'A' } = {}) {
       boxedText(formatNoBearing(t, units), cx, cy + Rt * 0.55 + i * nbSize * 1.9, { color: TCAS_COLORS[t.threat], size: nbSize, border: null });
     });
 
-    drawVsiTape(W - 16 - SIDE / 2 + 8, cy, Math.min(R * 0.62, (H - TOP - BOTTOM) / 2 - fs * 2), banner?.vsi, own, fs);
+    drawVsiTape(W - 16 * ui - side / 2 + 8 * ui, cy, Math.max(10, Math.min(R * 0.62, (H - top - bottom) / 2 - fs * 2)), banner?.vsi, own, fs);
     drawFlightData(own, fs);
     drawWaypointData(W, nav, fs);
-    if (banner) boxedText(banner.text, cx, 56, { color: banner.color, size: Math.max(14, Math.min(20, Math.round(W / 34))) });
+    if (banner) boxedText(banner.text, cx, 56 * ui, { color: banner.color, size: Math.max(11, Math.min(20, Math.round(W / 34), Math.round(20 * ui))) });
 
     // Bottom-left: POV and TCAS mode, status, then altitude display mode and filter.
     const tcasMode = own?.mode ?? 'TA/RA';
-    text(`${ownId} POV`, 16, H - 70, { size: fs + 1 });
+    text(`${ownId} POV`, 16, H - 70 * ui, { size: fs + 1 });
     ctx.font = `700 ${fs + 1}px ${FONT}`;
-    text(tcasMode === 'STBY' ? 'TCAS STBY' : tcasMode, 16 + ctx.measureText(`${ownId} POV`).width + fs, H - 70, { color: tcasMode === 'TA/RA' ? TCAS_COLORS.data : TCAS_COLORS.TA, size: fs });
-    const sy = H - 44;
+    text(tcasMode === 'STBY' ? 'TCAS STBY' : tcasMode, 16 + ctx.measureText(`${ownId} POV`).width + fs, H - 70 * ui, { color: tcasMode === 'TA/RA' ? TCAS_COLORS.data : TCAS_COLORS.TA, size: fs });
+    const sy = H - 44 * ui;
     if (stale) text('NO DATA', 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
     else if (s.mode !== 'airspace' && !s.phones[ownId].connected && !boardsReporting(s)) text(`OWN SHIP (${ownId}) OFFLINE`, 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
     else if (offscale) text('TRAFFIC', 16, sy, { color: TCAS_COLORS[offscale], size: fs + 1 }); // TA/RA beyond the selected range
     else if (!traffic.length) text('NO TRAFFIC', 16, sy, { color: TCAS_COLORS.dim, size: fs });
-    if (s?.mode === 'airspace') text(`REL  ${altFilter}`,16, H - 18, { color: TCAS_COLORS.data, size: fs });
+    if (s?.mode === 'airspace') text(`REL  ${altFilter}`, 16, H - 18 * ui, { color: TCAS_COLORS.data, size: fs });
   }
 
   return {

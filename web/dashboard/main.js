@@ -26,7 +26,30 @@ const conn = connect({
 const primary = createPrimaryHud($('hud-primary'));
 const diagnostics = createDiagnostics($('diagnostics'), {
   onDeviceTest: (id) => conn.send({ t: MSG.DEVICE_TEST, id, ms: 1000 }),
+  onSettings: (settings) => conn.send({ t: MSG.SETTINGS, ...settings }),
 });
+
+// ---- interface size -----------------------------------------------------------------------
+// The page is sized in rem (style.css), so --ui scales all of it. The default is a little below
+// the browser's 100% so everything fits when the browser itself is zoomed in; the displays
+// re-fit their windows on their own (ResizeObserver below).
+
+const UI_SIZES = [0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5];
+const UI_DEFAULT = 0.9;
+let uiSize = Number(prefs.get('ui-size'));
+if (!UI_SIZES.includes(uiSize)) uiSize = UI_DEFAULT;
+
+function setUiSize(size) {
+  uiSize = size;
+  document.documentElement.style.setProperty('--ui', String(size));
+  document.querySelector('#ui-size [data-ui="reset"]').textContent = `${Math.round(size * 100)}%`;
+  prefs.set('ui-size', String(size));
+}
+const stepUi = (by) => setUiSize(UI_SIZES[Math.max(0, Math.min(UI_SIZES.length - 1, UI_SIZES.indexOf(uiSize) + by))]);
+document.querySelector('#ui-size [data-ui="smaller"]').addEventListener('click', () => stepUi(-1));
+document.querySelector('#ui-size [data-ui="larger"]').addEventListener('click', () => stepUi(1));
+document.querySelector('#ui-size [data-ui="reset"]').addEventListener('click', () => setUiSize(UI_DEFAULT));
+setUiSize(uiSize);
 
 // ---- diagnostics drawer -------------------------------------------------------------------
 

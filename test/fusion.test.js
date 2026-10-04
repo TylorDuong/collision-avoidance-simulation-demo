@@ -11,6 +11,18 @@ import { mulberry32 } from '../tools/sim/world.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) < eps, `${msg ?? ''} ${a} vs ${b}`);
 
+// Fixed zones for the evaluator tests (the original phone-prototype set), so they do not
+// depend on the demo defaults in server/config.js, which are tuned for the ultrasonic boards.
+const ZONES = {
+  proximate: { range: 1.5 },
+  TA: { range: 0.75, ttc: 2.5 },
+  RA: { range: 0.3, ttc: 1.0 },
+  releaseRangeFactor: 1.15,
+  releaseTtcFactor: 1.3,
+  minHoldSeconds: 0.6,
+  minClosingSpeed: 0.05,
+};
+
 test('range filter tracks a closing target and estimates its rate', () => {
   const f = new RangeFilter(config.filter);
   const rng = mulberry32(3);
@@ -42,7 +54,7 @@ test('range filter extrapolation is capped at the prediction horizon', () => {
 });
 
 test('collision evaluator escalates immediately and releases with hysteresis', () => {
-  const z = config.zones;
+  const z = ZONES;
   const ev = new CollisionEvaluator(z);
   let t = 0;
   const step = (range, closingSpeed = 0) => ev.evaluate({ range, closingSpeed, valid: true }, (t += 0.1));
@@ -62,14 +74,14 @@ test('collision evaluator escalates immediately and releases with hysteresis', (
 });
 
 test('collision evaluator holds a level for the minimum time, then decays without data', () => {
-  const ev = new CollisionEvaluator(config.zones);
+  const ev = new CollisionEvaluator(ZONES);
   ev.evaluate({ range: 0.2, closingSpeed: 0, valid: true }, 0);
   assert.equal(ev.evaluate({ range: null, closingSpeed: 0, valid: false }, 0.1).threat, 'RA');
   assert.equal(ev.evaluate({ range: null, closingSpeed: 0, valid: false }, 1).threat, 'other');
 });
 
 test('collision: no-data reason clears once range returns at level other', () => {
-  const ev = new CollisionEvaluator(config.zones);
+  const ev = new CollisionEvaluator(ZONES);
   assert.equal(ev.evaluate({ range: null, closingSpeed: 0, valid: false }, 0).reason, 'no-data');
   const r = ev.evaluate({ range: 2.0, closingSpeed: 0, valid: true }, 0.1);
   assert.equal(r.threat, 'other');

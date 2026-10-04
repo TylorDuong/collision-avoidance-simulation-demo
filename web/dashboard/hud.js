@@ -39,17 +39,29 @@ export function createPrimaryHud(root) {
       threat.dataset.level = stale ? 'stale' : s.threat.level;
       set('level', stale ? 'NO DATA' : LEVEL_TEXT[s.threat.level]);
       const air = s.mode === 'airspace';
-      // Ultrasonic sensors are read in inches on the bench, so show both.
-      const metres = fmt(s.range.range, 2, ' m');
-      set('range', air ? fmt(s.range.range / NM, 2, ' NM') : s.range.source === 'ultrasonic' ? `${metres} · ${fmt(s.range.range / 0.0254, 1, ' in')}` : metres);
-      set('closing', air ? fmt(s.range.closingSpeed / KT, 0, ' kt') : fmt(s.range.closingSpeed, 2, ' m/s'));
+      // `fmt(null / x)` would print 0, so scale only known values. With live ultrasonic data the
+      // display is in NM at the configured scale; the real gap is written beside it in inches.
+      const per = (v, unit) => (v === null || v === undefined ? null : v / unit);
+      const inches = s.live && s.live.range !== null ? ` · ${fmt(s.live.range / 0.0254, 1, ' in')}` : '';
+      set('range', air ? `${fmt(per(s.range.range, NM), 2, ' NM')}${inches}` : fmt(s.range.range, 2, ' m'));
+      set('closing', air ? fmt(per(s.range.closingSpeed, KT), 0, ' kt') : fmt(s.range.closingSpeed, 2, ' m/s'));
       set('ttc-k', air ? 'Tau' : 'TTC');
       set('ttc', s.range.ttc === null ? '—' : fmt(s.range.ttc, 1, ' s'));
     },
   };
 }
 
-export function createDiagnostics(root, { onDeviceTest }) {
+// Live demo settings form: field -> [label, input step]. Names match the server's `settings` message.
+const SETTING_FIELDS = {
+  nmPerInch: ['NM per inch', 0.01],
+  proximateIn: ['Proximate at (in)', 1],
+  taIn: ['TA at (in)', 1],
+  raIn: ['RA at (in)', 1],
+  taTtc: ['TA time (s)', 0.1],
+  raTtc: ['RA time (s)', 0.1],
+};
+
+export function createDiagnostics(root, { onDeviceTest, onSettings }) {
   root.innerHTML = `
     <section class="card">
       <h2>Range</h2>
@@ -63,12 +75,44 @@ export function createDiagnostics(root, { onDeviceTest }) {
       <h2>Ultrasonic ranging</h2>
       <dl class="kv" data-k="us-boards"><dt>Boards</dt><dd>waiting for data</dd></dl>
     </section>
+    <section class="card settings">
+      <h2>Live demo scale and zones</h2>
+      <p class="note">Maps the real gap between the planes onto the TCAS display, and sets where each threat level starts.</p>
+      <div class="fields">${Object.entries(SETTING_FIELDS).map(([name, [label, step]]) => `
+        <label>${label}<input type="number" min="0" step="${step}" data-k="set-${name}" data-field="${name}" /></label>`).join('')}
+      </div>
+      <div class="row"><button class="btn" data-k="set-apply">Apply</button><span class="note" data-k="set-msg"></span></div>
+    </section>
     <section class="card">
       <h2>Actuators</h2>
       <div class="devices" data-k="devices"><p class="note">No ESP32 connected.</p></div>
     </section>`;
 
   const { el, set } = bind(root);
+
+  // Settings form: follows the server's values until the user starts editing; Apply sends the
+  // fields and the form goes back to following the server (which also reports a rejection).
+  let editing = false;
+  const settingInputs = Object.keys(SETTING_FIELDS).map((name) => el[`set-${name}`]);
+  for (const input of settingInputs) input.addEventListener('input', () => (editing = true));
+  el['set-apply'].addEventListener('click', () => {
+    onSettings(Object.fromEntries(settingInputs.map((i) => [i.dataset.field, i.value === '' ? undefined : Number(i.value)])));
+    editing = false;
+  });
+
+  function renderSettings(cfg) {
+    if (!cfg) return;
+    if (!editing) {
+      for (const input of settingInputs) {
+        const v = String(cfg[input.dataset.field]);
+        if (input.value !== v && document.activeElement !== input) input.value = v;
+      }
+    }
+    // Where each level starts on the display, so the scale can be checked at a glance.
+    const nm = (inches) => fmt(inches * cfg.nmPerInch, 2, ' NM');
+    set('set-msg', cfg.error ?? `proximate ${nm(cfg.proximateIn)} · TA ${nm(cfg.taIn)} · RA ${nm(cfg.raIn)}`);
+    el['set-msg'].dataset.error = String(!!cfg.error);
+  }
 
   el.devices.addEventListener('click', (e) => {
     const id = e.target.closest('[data-test]')?.dataset.test;
@@ -148,6 +192,7 @@ export function createDiagnostics(root, { onDeviceTest }) {
       set('reason', stale ? 'server state is stale' : REASON_TEXT[s.threat.reason] ?? '—');
 
       renderUltrasonic(s.ultrasonic?.boards);
+      renderSettings(s.settings);
       renderDevices(s.devices);
     },
   };

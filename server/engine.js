@@ -14,6 +14,9 @@ import { ActivityTracker } from './fusion/activity.js';
 import { ClockSync } from './fusion/clock.js';
 import { gpsRange, gpsRelativeAltitude } from './fusion/gps.js';
 import { CollisionEvaluator, selectRaSenses } from './collision.js';
+import { INCH, applySettings, loadSettings, readSettings, saveSettings } from './settings.js';
+
+const NM = 1852; // m
 
 class RateCounter {
   constructor() {
@@ -53,12 +56,16 @@ export class Engine {
    * @param {boolean} [opts.persist=true] load/save calibration from disk
    */
   constructor(config, { now = () => performance.now() / 1000, persist = true } = {}) {
-    this.cfg = config;
+    // The live settings (scale and zones) are edited at runtime, so this engine gets its own
+    // copy of them rather than mutating the shared config.
+    this.cfg = { ...config, zones: structuredClone(config.zones), live: { ...config.live } };
     this.now = now;
     this.persist = persist;
+    this.settingsError = null; // why the last settings update was rejected, if it was
+    if (persist) loadSettings(this.cfg, this.cfg.settings.file);
     this.phones = { A: newPhone(), B: newPhone() };
     this.filter = new RangeFilter(config.filter);
-    this.collision = new CollisionEvaluator(config.zones);
+    this.collision = new CollisionEvaluator(this.cfg.zones);
     this.K = config.ranging.defaultK;
     this.calibrated = false;
     this.calibration = { state: 'idle', target: null, raws: [] };
@@ -163,6 +170,30 @@ export class Engine {
   _ultrasonicStatus(b, t) {
     if (t - b.t > this.cfg.ultrasonic.signalTimeoutSeconds) return 'no-signal';
     return b.range === null ? 'no-echo' : 'ok';
+  }
+
+  // ---- live demo settings (scale and zones) -----------------------------------------
+
+  /** Apply a dashboard `settings` message; a rejected update changes nothing. */
+  applySettings(input) {
+    const res = applySettings(this.cfg, input);
+    this.settingsError = res.ok ? null : res.error;
+    if (res.ok && this.persist) saveSettings(this.cfg, this.cfg.settings.file);
+    return res;
+  }
+
+  _settingsState() {
+    const round = (v) => Math.round(v * 100) / 100;
+    const s = readSettings(this.cfg);
+    return {
+      nmPerInch: s.nmPerInch,
+      proximateIn: round(s.proximateIn),
+      taIn: round(s.taIn),
+      raIn: round(s.raIn),
+      taTtc: s.taTtc,
+      raTtc: s.raTtc,
+      error: this.settingsError,
+    };
   }
 
   // ---- simulated airspace -----------------------------------------------------------
@@ -330,6 +361,53 @@ export class Engine {
     };
   }
 
+  /**
+   * Live demo picture: the real ultrasonic gap on one axis, drawn as the TCAS demo's airspace.
+   * A and B fly head-on (A east, B west), `nmPerInch` displayed NM per real inch apart, each
+   * dead ahead of the other (bearing 0), no altitude. Everything here is in display units
+   * (metres of the simulated airspace, like tools/sim/airspace.js); the real gap is in
+   * `live.range`. Threat levels still come from the real-unit zones.
+   * @param {{ range, rangeRate, source }} real the filtered real range (m, m/s)
+   */
+  _liveFrame(real, t) {
+    const k = (this.cfg.live.nmPerInch * NM) / INCH; // displayed metres per real metre
+    const usable = real.range !== null && real.source !== 'stale' && real.source !== 'none'; // no frozen positions
+    const sep = usable ? real.range * k : null;
+    const rate = usable ? real.rangeRate * k : null;
+    const gs = usable ? Math.abs(rate) / 2 : null; // each node covers half the closing speed
+    const senses = this.raSenses;
+
+    const aircraft = usable
+      ? [
+          { id: 'A', tcas: true, x: -sep / 2, y: 0, alt: null, trk: 90, gs, vs: 0, ra: senses ? senses.A : null },
+          { id: 'B', tcas: true, x: sep / 2, y: 0, alt: null, trk: 270, gs, vs: 0, ra: senses ? senses.B : null },
+        ]
+      : [];
+    const picture = (ownId, otherId, heading) => ({
+      ownship: {
+        id: ownId,
+        heading,
+        groundSpeed: gs,
+        trueAirspeed: null,
+        wind: null,
+        altitude: null,
+        verticalSpeed: null,
+        mode: 'TA/RA',
+        ra: senses ? { sense: senses[ownId], intruder: otherId } : null,
+      },
+      traffic: this._nodePresent(otherId, t)
+        ? [{ id: otherId, range: sep, rangeRate: rate, bearing: 0, relAlt: null, relAltRate: null, threat: this.threat.threat }]
+        : [],
+      nav: null,
+    });
+    return {
+      aircraft,
+      perspectives: { A: picture('A', 'B', 90), B: picture('B', 'A', 270) },
+      range: { range: sep, rangeRate: rate, closingSpeed: usable ? -rate : null, sigma: null, ttc: this.threat.ttc, source: real.source },
+      live: { nmPerInch: this.cfg.live.nmPerInch, scale: k, range: usable ? real.range : null },
+    };
+  }
+
   getState() {
     const t = this.now();
     const est = this.estimate ?? null;
@@ -351,16 +429,8 @@ export class Engine {
     };
     const relAlt = gpsRelativeAltitude(this.phones.A.gps, this.phones.B.gps);
     const sim = this._airspaceLive(t) ? this.airspace.data : null;
-    const range = sim
-      ? {
-          range: sim.pair.range,
-          rangeRate: sim.pair.rangeRate,
-          closingSpeed: sim.pair.closingSpeed,
-          sigma: null,
-          ttc: sim.pair.tau,
-          source: 'sim',
-        }
-      : est
+    // Real filtered range in metres, whatever the source.
+    const real = est
       ? {
           range: est.range,
           rangeRate: est.rate,
@@ -370,13 +440,35 @@ export class Engine {
           source: this.source,
         }
       : { range: null, rangeRate: null, closingSpeed: null, sigma: null, ttc: null, source: this.source ?? 'none' };
+    // Ultrasonic boards present (and no simulator): show the demo UI with the real gap scaled in.
+    const live = !sim && this.ultrasonic.boards.size > 0 ? this._liveFrame(real, t) : null;
+    const range = sim
+      ? {
+          range: sim.pair.range,
+          rangeRate: sim.pair.rangeRate,
+          closingSpeed: sim.pair.closingSpeed,
+          sigma: null,
+          ttc: sim.pair.tau,
+          source: 'sim',
+        }
+      : live
+      ? live.range
+      : real;
 
     return {
       t: MSG.STATE,
       serverTime: t * 1000,
-      // 'phones': the two phones' ranging pipeline. 'airspace': the TCAS demo simulator.
-      mode: sim ? 'airspace' : 'phones',
-      airspace: sim ? { simTime: sim.simTime, loop: sim.loop, aircraft: sim.aircraft } : null,
+      // 'phones': the two phones' ranging pipeline. 'airspace': the TCAS demo, fed either by the
+      // simulator or by the live ultrasonic gap (`live`); range, perspectives and aircraft are
+      // then in display units and the real gap and scale are in `live`.
+      mode: sim || live ? 'airspace' : 'phones',
+      airspace: sim
+        ? { simTime: sim.simTime, loop: sim.loop, aircraft: sim.aircraft }
+        : live
+        ? { simTime: t, loop: 0, aircraft: live.aircraft }
+        : null,
+      live: live ? live.live : null,
+      settings: this._settingsState(),
       phones: { A: phoneState('A'), B: phoneState('B') },
       range,
       acoustic: {
@@ -403,6 +495,8 @@ export class Engine {
       // traffic. Range and threat are symmetric; relative altitude flips sign.
       perspectives: sim
         ? sim.perspectives
+        : live
+        ? live.perspectives
         : {
             A: this._perspective('A', 'B', range, relAlt, t),
             B: this._perspective('B', 'A', range, relAlt === null ? null : -relAlt, t),

@@ -96,7 +96,7 @@ npm run mock -- --rate 2              # run the scenario twice as fast
   |---|---|
   | white airplane | own ship (centre, heading-up) |
   | hollow cyan diamond | other traffic |
-  | filled cyan diamond | proximate traffic (within 6 NM and ±1200 ft; proximity mode: < 1.5 m) |
+  | filled cyan diamond | proximate traffic (within 6 NM and ±1200 ft; proximity mode: inside the proximate distance) |
   | filled amber circle | **TA**, traffic advisory |
   | filled red square | **RA**, resolution advisory |
 
@@ -131,7 +131,10 @@ Each ESP32 carries one ultrasonic distance sensor (for example an HC-SR04 or a w
 
 - `firmware/esp32-actuator` triggers the sensor at 10 Hz (`TRIG_PIN` / `ECHO_PIN`, set them to your wiring), converts the echo time to metres, and sends `{t:'range', range}` to the server over the `/device` WebSocket. `range` is `null` when no echo came back.
 - The server (`engine.handleRange`) feeds every reading into the same Kalman filter, with source `ultrasonic`. Both boards measure the same gap, so each reading is an independent measurement. A reading outside 2 cm to 4 m counts as no echo and is not filtered (`ultrasonic` in `server/config.js`). A board silent for 2 s shows NO SIGNAL.
-- The threat logic and both TCAS displays work unchanged. The dashboard's "Ultrasonic ranging" card shows each board's latest reading in inches, "no echo" or "NO SIGNAL". The threat zones are the ones in `server/config.js`.
+- **Same UI as the TCAS demo.** Once any board has reported, the dashboard uses the demo's airspace display (NM, kt, A POV and B POV, 3D airspace) instead of the metre-based phone display. The server draws the real gap on one axis: A and B head-on, each straight ahead of the other (bearing 0), no altitude, `nmPerInch` displayed NM per real inch apart (`live` in `server/config.js`). The top bar shows the displayed range and the real inches, for example `1.97 NM · 19.7 in`.
+- **Adjustable from the dashboard.** The "Live demo scale and zones" card in the diagnostics drawer sets the ratio and where each threat level starts: proximate, TA and RA distances in real inches, and the TA and RA time-to-collision in seconds. It applies immediately and is saved to `data/settings.json`. The defaults are `live` and `zones` in `server/config.js`. The threat level is decided on the real distance, not the displayed one, so the ratio only changes how the picture looks.
+- **Fits any window.** The page is sized in `rem` and starts at 90% of the browser's size. The `−` / `+` buttons in the top bar change it (the middle button resets it) and the choice is remembered. Each TCAS display shrinks its margins in a small window so the whole circle and its controls stay inside it. If the window is too small for the displays, the page scrolls instead of hiding them.
+- The "Ultrasonic ranging" card shows each board's latest reading in inches, "no echo" or "NO SIGNAL".
 - Most HC-SR04 modules run on 5 V and drive `ECHO` at 5 V. Put a voltage divider (for example 1 kΩ and 2 kΩ) on `ECHO` before it reaches an ESP32 GPIO, which is 3.3 V only.
 
 Expect these limits from ultrasonic sensing:
@@ -197,9 +200,11 @@ Levels follow TCAS naming. A level triggers on distance **or** time-to-collision
 
 | Level | Distance | TTC |
 |---|---|---|
-| proximate | < 1.5 m | — |
-| TA (caution) | < 0.75 m | < 2.5 s |
-| RA (danger) | < 0.3 m | < 1.0 s |
+| proximate | < 18 in | — |
+| TA (caution) | < 10 in | < 0.1 s |
+| RA (danger) | < 6 in | < 0.1 s |
+
+These are tuned for ultrasonic boards that read up to about 20 in. Proximate sits just inside that so it doesn't flicker at the sensor's limit. A TTC of 0.1 s is the minimum, which switches the closing-speed test off, so the levels depend on distance only. Raise the times to warn earlier when the planes close fast. The dashboard's "Live demo scale and zones" card changes all of these live. `data/settings.json`, written by that card, overrides these defaults, so delete it to return to them.
 
 A higher level takes effect immediately. A lower level only takes effect after 0.6 s, and only once the distance or TTC clears a looser release threshold (×1.15 for distance, ×1.3 for TTC), so warnings don't flicker.
 
