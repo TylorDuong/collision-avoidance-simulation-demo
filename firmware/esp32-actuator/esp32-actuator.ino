@@ -30,7 +30,7 @@
 #include "secrets.h"
 
 // ---- pins --------------------------------------------------------------------------
-const int LED_PIN = 2;                 // onboard LED on most ESP32 DevKit boards
+const int LED_PIN = 13;                // external LED (GPIO 13 -> resistor -> LED -> GND), not the onboard one
 const int MECH_PIN = 26;               // to MOSFET gate / relay module IN
 const bool MECH_ACTIVE_HIGH = true;    // many relay modules are active-LOW: set false
 // Ultrasonic sensor (HC-SR04 class) aimed straight at the other plane (one axis).

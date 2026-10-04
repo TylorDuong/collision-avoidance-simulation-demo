@@ -165,7 +165,9 @@ laptop hotspot (2.4 GHz) ─▶ server ──WebSocket──▶ ESP32 A ⇄ ESP-
 **Wiring** (the same on both boards; pins are set at the top of the sketch):
 
 ```
-GPIO2  ── onboard LED (or GPIO → 220 Ω → LED → GND)
+GPIO13 ── 220 Ω → LED → GND  (external LED; the onboard LED on GPIO 2 is not used)
+GPIO14 ── ultrasonic TRIG
+GPIO12 ── ultrasonic ECHO (through a voltage divider if the sensor runs at 5 V)
 GPIO26 ── relay module IN  or  logic-level N-MOSFET gate (100 Ω series, 10 kΩ to GND)
            MOSFET drain → load (−), load (+) → external supply, flyback diode across inductive loads
 GND    ── common ground with the external supply
