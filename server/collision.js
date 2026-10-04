@@ -7,6 +7,22 @@ export function timeToCollision(range, closingSpeed, minClosingSpeed) {
   return closingSpeed > minClosingSpeed ? range / closingSpeed : null;
 }
 
+/**
+ * Coordinated RA senses for A and B, always complementary so they never both climb or
+ * both descend (TCAS coordination). With usable vertical separation the higher node climbs
+ * and the lower descends; otherwise A climbs and B descends (fixed tie-break, like the lower
+ * Mode S address climbing in tools/sim/airspace.js).
+ * @param {number|null} relAlt B's altitude minus A's (m), null when unknown
+ * @param {number} threshold minimum |relAlt| (m) to choose by altitude
+ * @returns {{ A: 'up'|'down', B: 'up'|'down' }}
+ */
+export function selectRaSenses(relAlt, threshold) {
+  if (relAlt !== null && relAlt !== undefined && Math.abs(relAlt) >= threshold) {
+    return relAlt > 0 ? { A: 'down', B: 'up' } : { A: 'up', B: 'down' };
+  }
+  return { A: 'up', B: 'down' };
+}
+
 export class CollisionEvaluator {
   constructor(zones) {
     this.z = zones;

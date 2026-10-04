@@ -8,8 +8,9 @@
 //     relative bearing with its symbol and data tag. Dashed range rings at round fractions
 //     of the selected range (labelled; full scale carries the unit); selected range boxed
 //     in the upper right. Rings, route and traffic share one range scale. Off-scale TAs/RAs
-//     are half symbols at the edge. Traffic without a bearing is only reported in writing,
-//     for TAs/RAs ("RA 4.5 +12"). Under the traffic, own flight-plan route in green
+//     are half symbols at the edge. Traffic without a bearing (range-only sensing) is drawn
+//     at its range on a fixed straight-ahead axis with its distance written beside it, and
+//     TAs/RAs are also reported in writing ("RA 0.28 +02"). Under the traffic, own route in green
 //     (perspective.nav, never processed as traffic).
 //   - Right edge: vertical speed tape (0 .5 1 2 4 6 thousand fpm) with the own-ship pointer.
 //     During an RA, red bands mark the rates to avoid and a green band the rate to fly.
@@ -33,6 +34,9 @@ const BOTTOM = 66; // status annunciations + range / altitude-filter buttons
 const SIDE = 48; // vertical speed tape (reserved on both sides to keep the rose centred)
 const ROUTE_CLIP = 0.78; // route drawn out to this fraction of R, inside the compass numerals
 const RING_LABEL_BEARING = 315; // range ring labels along the upper-left ray (deg from up)
+// Range-only traffic (phones / ultrasonic boards: no bearing) is drawn at its range on this
+// fixed relative bearing, straight ahead. Its direction is not observable.
+const NO_BEARING_AXIS = 0;
 
 const prefs = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -54,6 +58,9 @@ function vsiFraction(v) {
   return (Math.sign(v) * deg) / VSI_ANCHORS.at(-1)[1];
 }
 
+// Ultrasonic boards stand in for the phones while any of them is still reporting (the
+// server's Engine._nodePresent rule), even between accepted readings.
+const boardsReporting = (s) => (s.ultrasonic?.boards ?? []).some((b) => b.status !== 'no-signal');
 const signed = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 const known = (v) => v !== null && v !== undefined;
 const DEG = Math.PI / 180;
@@ -340,8 +347,12 @@ export function createTcasView({ ownId = 'A' } = {}) {
     return t.relAlt >= below && t.relAlt <= above;
   }
 
-  /** @returns {boolean} true when drawn as an off-scale half symbol */
-  function drawPositionedTraffic(cx, cy, Rt, sym, t) {
+  /**
+   * @param {boolean} [noBearing] range-only traffic drawn on the fixed NO_BEARING_AXIS: also
+   *   gets its distance written beside the symbol, since the position only shows range
+   * @returns {boolean} true when drawn as an off-scale half symbol
+   */
+  function drawPositionedTraffic(cx, cy, Rt, sym, t, noBearing = false) {
     const full = rangeScale * units.range;
     if (t.range > full) {
       if (t.threat !== 'TA' && t.threat !== 'RA') return false;
@@ -352,6 +363,10 @@ export function createTcasView({ ownId = 'A' } = {}) {
     const { x, y } = toScreen(cx, cy, Rt, t.range, t.bearing);
     drawTraffic(ctx, x, y, sym, t.threat);
     drawDataTag(ctx, x, y, sym, t, TCAS_COLORS[t.threat], units);
+    if (noBearing) {
+      // Right of the symbol, past the trend arrow's slot; ring labels are on the left.
+      text(`${formatRange(t.range, units)} ${units.rangeUnit}`, x + sym * 1.4, y, { color: TCAS_COLORS[t.threat], size: Math.round(sym * 0.85), align: 'left', baseline: 'middle' });
+    }
     return false;
   }
 
@@ -440,9 +455,10 @@ export function createTcasView({ ownId = 'A' } = {}) {
     const noBearing = [];
     let offscale = null;
     for (const t of shown) {
-      if (t.bearing === null || t.bearing === undefined) {
-        if (t.threat === 'TA' || t.threat === 'RA') noBearing.push(t);
-      } else if (drawPositionedTraffic(cx, cy, Rt, sym, t)) {
+      const hasBearing = t.bearing !== null && t.bearing !== undefined;
+      if (!hasBearing && (t.threat === 'TA' || t.threat === 'RA')) noBearing.push(t);
+      const placed = hasBearing ? t : { ...t, bearing: NO_BEARING_AXIS };
+      if (drawPositionedTraffic(cx, cy, Rt, sym, placed, !hasBearing)) {
         if (!offscale || ORDER[t.threat] > ORDER[offscale]) offscale = t.threat;
       }
     }
@@ -463,7 +479,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     text(tcasMode === 'STBY' ? 'TCAS STBY' : tcasMode, 16 + ctx.measureText(`${ownId} POV`).width + fs, H - 70, { color: tcasMode === 'TA/RA' ? TCAS_COLORS.data : TCAS_COLORS.TA, size: fs });
     const sy = H - 44;
     if (stale) text('NO DATA', 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
-    else if (s.mode !== 'airspace' && s.range.source !== 'ultrasonic' && !s.phones[ownId].connected) text(`OWN SHIP (${ownId}) OFFLINE`, 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
+    else if (s.mode !== 'airspace' && !s.phones[ownId].connected && !boardsReporting(s)) text(`OWN SHIP (${ownId}) OFFLINE`, 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
     else if (offscale) text('TRAFFIC', 16, sy, { color: TCAS_COLORS[offscale], size: fs + 1 }); // TA/RA beyond the selected range
     else if (!traffic.length) text('NO TRAFFIC', 16, sy, { color: TCAS_COLORS.dim, size: fs });
     if (s?.mode === 'airspace') text(`REL  ${altFilter}`,16, H - 18, { color: TCAS_COLORS.data, size: fs });

@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine } from '../server/engine.js';
 import { config } from '../server/config.js';
+import { selectRaSenses } from '../server/collision.js';
 
 function setup() {
   let simTime = 0;
@@ -82,4 +83,57 @@ test('a silent board shows no-signal and the range goes stale', () => {
   run(config.filter.staleAfter);
   assert.equal(engine.getState().range.source, 'stale');
   assert.equal(engine.getState().perspectives.A.traffic.length, 0);
+});
+
+test('RA senses are complementary: one node climbs, the other descends', () => {
+  const { engine, run, now } = setup();
+  let n = 0;
+  const t0 = now();
+  const senses = new Set();
+  run(4, (t) => {
+    if (n++ % 5 === 0) bothBoards(engine, Math.max(0.1, 1.8 - 0.45 * (t - t0)));
+    const { A, B } = engine.getState().perspectives;
+    if (A.ownship.ra || B.ownship.ra) senses.add(`${A.ownship.ra?.sense}/${B.ownship.ra?.sense}`);
+  });
+  assert.equal(engine.threat.threat, 'RA');
+  assert.deepEqual([...senses], ['up/down']); // never both climbing, never flipping mid-RA
+  const { A, B } = engine.getState().perspectives;
+  assert.equal(A.ownship.ra.intruder, 'B');
+  assert.equal(B.ownship.ra.intruder, 'A');
+
+  // Moving apart clears the RA and its senses.
+  n = 0;
+  run(4, () => {
+    if (n++ % 5 === 0) bothBoards(engine, 2.5);
+  });
+  assert.notEqual(engine.threat.threat, 'RA');
+  assert.equal(engine.getState().perspectives.A.ownship.ra, null);
+  assert.equal(engine.getState().perspectives.B.ownship.ra, null);
+});
+
+test('sense selection: the higher node climbs; without altitude A climbs and B descends', () => {
+  assert.deepEqual(selectRaSenses(null, 1), { A: 'up', B: 'down' });
+  assert.deepEqual(selectRaSenses(0.4, 1), { A: 'up', B: 'down' }); // inside GPS noise: tie-break
+  assert.deepEqual(selectRaSenses(3, 1), { A: 'down', B: 'up' }); // B is 3 m higher
+  assert.deepEqual(selectRaSenses(-3, 1), { A: 'up', B: 'down' });
+});
+
+test('the other node stays on both displays between accepted readings', () => {
+  const { engine, run } = setup();
+  let n = 0;
+  run(1, () => {
+    if (n++ % 5 === 0) bothBoards(engine, 1.0);
+  });
+  // Boards still reporting but with no echo for a while: no longer 'ultrasonic', still present.
+  n = 0;
+  run(1.5, () => {
+    if (n++ % 5 === 0) bothBoards(engine, null);
+  });
+  const s = engine.getState();
+  assert.notEqual(s.range.source, 'ultrasonic');
+  for (const [own, other] of [['A', 'B'], ['B', 'A']]) {
+    assert.equal(s.perspectives[own].traffic.length, 1);
+    assert.equal(s.perspectives[own].traffic[0].id, other);
+    assert.ok(Math.abs(s.perspectives[own].traffic[0].range - 1.0) < 0.1); // same distance on both
+  }
 });

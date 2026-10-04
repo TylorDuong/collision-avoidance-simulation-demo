@@ -13,7 +13,7 @@ import { OrientationTracker } from './fusion/orientation.js';
 import { ActivityTracker } from './fusion/activity.js';
 import { ClockSync } from './fusion/clock.js';
 import { gpsRange, gpsRelativeAltitude } from './fusion/gps.js';
-import { CollisionEvaluator } from './collision.js';
+import { CollisionEvaluator, selectRaSenses } from './collision.js';
 
 class RateCounter {
   constructor() {
@@ -69,6 +69,7 @@ export class Engine {
     this.lastGpsUsedAt = -Infinity;
     this.lastPingAt = -Infinity;
     this.threat = { threat: 'other', level: 0, reason: 'no-data', ttc: null };
+    this.raSenses = null; // { A, B } complementary senses, latched for the life of an RA
     this.listeners = { alert: [] };
     this.airspace = null; // { data, receivedAt } from the airspace simulator
 
@@ -275,6 +276,7 @@ export class Engine {
       this.threat = { threat: THREAT[level], level, reason: 'tau', ttc: pair.tau };
       this.estimate = { range: pair.range, rate: pair.rangeRate, sigma: null };
       this.source = 'sim';
+      this.raSenses = null; // the simulator coordinates its own aircraft
     } else {
       const { moving } = this._motionState();
       const est = this.filter.estimate(t, moving);
@@ -286,6 +288,8 @@ export class Engine {
       );
       this.estimate = est;
       this.source = source;
+      if (this.threat.threat !== 'RA') this.raSenses = null;
+      else this.raSenses ??= selectRaSenses(gpsRelativeAltitude(this.phones.A.gps, this.phones.B.gps), this.cfg.ra.senseAltThreshold);
     }
     if (this.threat.threat !== prev) {
       for (const id of PHONE_IDS) this._send(id, { t: MSG.ALERT, level: this.threat.threat });
@@ -293,16 +297,28 @@ export class Engine {
     }
   }
 
-  _perspective(ownId, otherId, range, relAlt) {
+  // Ultrasonic boards stand in for the phones: the other node is traffic while its phone is
+  // connected or any board is still reporting, even between accepted readings.
+  _nodePresent(id, t) {
+    if (this.phones[id].connected) return true;
+    const timeout = this.cfg.ultrasonic.signalTimeoutSeconds;
+    return [...this.ultrasonic.boards.values()].some((b) => t - b.t <= timeout);
+  }
+
+  _perspective(ownId, otherId, range, relAlt, t) {
+    const usable = range.source !== 'stale' && range.source !== 'none'; // no frozen positions
     return {
-      ownship: { id: ownId, heading: this.phones[ownId].orientation.heading, mode: 'TA/RA' },
-      // Ultrasonic boards stand in for the phones: the other node is traffic whenever a live
-      // ultrasonic range exists, even with no phone connected.
-      traffic: this.phones[otherId].connected || range.source === 'ultrasonic'
+      ownship: {
+        id: ownId,
+        heading: this.phones[ownId].orientation.heading,
+        mode: 'TA/RA',
+        ra: this.raSenses ? { sense: this.raSenses[ownId], intruder: otherId } : null,
+      },
+      traffic: this._nodePresent(otherId, t)
         ? [
             {
               id: otherId,
-              range: range.range,
+              range: usable ? range.range : null,
               rangeRate: range.rangeRate,
               bearing: null, // not observable with range-only sensing
               relAlt,
@@ -388,8 +404,8 @@ export class Engine {
       perspectives: sim
         ? sim.perspectives
         : {
-            A: this._perspective('A', 'B', range, relAlt),
-            B: this._perspective('B', 'A', range, relAlt === null ? null : -relAlt),
+            A: this._perspective('A', 'B', range, relAlt, t),
+            B: this._perspective('B', 'A', range, relAlt === null ? null : -relAlt, t),
           },
       calibration: {
         state: this.calibration.state,
