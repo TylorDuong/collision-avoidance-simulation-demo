@@ -33,6 +33,11 @@
 const int LED_PIN = 2;                 // onboard LED on most ESP32 DevKit boards
 const int MECH_PIN = 26;               // to MOSFET gate / relay module IN
 const bool MECH_ACTIVE_HIGH = true;    // many relay modules are active-LOW: set false
+// Ultrasonic sensor (HC-SR04 class) aimed straight at the other plane (one axis).
+// HC-SR04 drives ECHO at 5 V: put a voltage divider (e.g. 1k + 2k) before the ESP32 pin.
+// GPIO 12 is a boot-strapping pin: ECHO idles low so it is fine, but never hold it high at reset.
+const int TRIG_PIN = 14;
+const int ECHO_PIN = 12;
 
 // ---- behaviour ---------------------------------------------------------------------
 const uint32_t MECH_MIN_ON_MS = 500;   // once triggered, hold at least this long
@@ -43,6 +48,9 @@ const uint32_t PEER_TIMEOUT_MS = 1000; // peer considered lost after this much s
 const bool PEER_EXPECTED = true;       // show the "peer lost" blip
 const uint32_t WIFI_RETRY_MS = 5000;
 const uint32_t STATUS_REFRESH_MS = 5000;
+const uint32_t RANGE_PERIOD_MS = 100;    // ultrasonic reading rate (10 Hz)
+const uint32_t ECHO_TIMEOUT_US = 30000;  // no echo within this (30 ms, ~5 m) -> "no echo"
+const float CM_PER_US = 0.0343f;         // speed of sound at 20 °C, cm per microsecond
 
 enum Level : uint8_t { OTHER, PROXIMATE, TA, RA };
 enum Source : uint8_t { SRC_NONE, SRC_SERVER, SRC_PEER };
@@ -232,7 +240,7 @@ void onWsEvent(WStype_t type, uint8_t *payload, size_t length) {
       hello["t"] = "hello";
       hello["role"] = "device";
       hello["id"] = DEVICE_ID;
-      hello["fw"] = "esp32-actuator/2";
+      hello["fw"] = "esp32-actuator/5";
       if (strlen(DEVICE_TOKEN)) hello["token"] = DEVICE_TOKEN;
       sendJson(hello);
       break;
@@ -335,6 +343,46 @@ void reportStatus(uint32_t now) {
   sendJson(doc);
 }
 
+// ---- ultrasonic range --------------------------------------------------------------
+
+// Same measurement as the bench sketch: distance to the other plane in inches,
+// or -1 when no echo came back in time.
+float measureInches() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  unsigned long duration = pulseIn(ECHO_PIN, HIGH, ECHO_TIMEOUT_US);
+  if (duration == 0) return -1.0f; // no echo
+  float cm = duration * CM_PER_US / 2.0f;
+  return cm / 2.54f;
+}
+
+// Sends {t:'range', range} (metres, null = no echo); the server feeds it to the range filter.
+void reportRange(uint32_t now) {
+  static uint32_t lastAt = 0;
+  if (now - lastAt < RANGE_PERIOD_MS) return;
+  lastAt = now;
+  float inches = measureInches(); // blocks up to ECHO_TIMEOUT_US
+
+  // Bench check without the server: inches readout 4 times a second.
+  static uint32_t lastPrintAt = 0;
+  if (now - lastPrintAt >= 250) {
+    lastPrintAt = now;
+    if (inches < 0) Serial.println("[range] no echo");
+    else Serial.printf("[range] %.1f in\n", inches);
+  }
+
+  if (!wsConnected) return;
+  JsonDocument doc;
+  doc["t"] = "range";
+  if (inches < 0) doc["range"] = nullptr;
+  else doc["range"] = roundf(inches * 0.0254f * 1000.0f) / 1000.0f; // metres, mm resolution
+  sendJson(doc);
+}
+
 // ---- Wi-Fi -------------------------------------------------------------------------
 
 // ESP-NOW shares the radio with Wi-Fi, so while off the hotspot we retry on the hotspot's
@@ -363,6 +411,9 @@ void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
   pinMode(MECH_PIN, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  digitalWrite(TRIG_PIN, LOW);
   digitalWrite(MECH_PIN, MECH_ACTIVE_HIGH ? LOW : HIGH); // mechanism off at boot
   groupHash = fnv1a(GROUP_ID);
 
@@ -395,6 +446,7 @@ void loop() {
   if (now - lastBeaconAt >= PEER_BEACON_MS) sendBeacon(now);
   updateOutputs(now);
   reportStatus(now);
+  reportRange(now);
 
   static bool wasAlive = false;
   bool alive = peerAlive(now);

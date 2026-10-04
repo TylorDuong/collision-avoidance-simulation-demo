@@ -124,30 +124,21 @@ body {
 .kv dd { margin: 0; text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 .badge { font: 11px/1 var(--mono); padding: 3px 6px; border-radius: 4px; background: var(--line); color: var(--muted); }
-.badge[data-v='acoustic'] { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.badge[data-v='acoustic'], .badge[data-v='ultrasonic'] { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
 .badge[data-v='gps'] { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
 .badge[data-v='stale'], .badge[data-v='none'] { background: color-mix(in srgb, var(--ra) 18%, transparent); color: var(--ra); }
 
-.phones { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.phone { font-size: 12px; }
-.phone header { display: flex; align-items: center; gap: 6px; font: 700 14px/1 var(--mono); margin-bottom: 6px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ra); }
 .dot[data-on='true'] { background: var(--ok); }
-.phone .kv { gap: 2px 6px; }
 
 .devices { display: grid; gap: 10px; }
 .device header { display: flex; align-items: center; gap: 6px; font: 700 13px/1 var(--mono); margin-bottom: 6px; }
 .device header .btn { margin-left: auto; padding: 5px 9px; }
 .device .kv { font-size: 12px; gap: 2px 6px; }
 
-.calib { display: grid; gap: 8px; }
-.calib .row { display: flex; gap: 8px; align-items: center; }
-.calib input { width: 80px; padding: 7px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: 13px var(--mono); }
 .btn { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font: 600 12px/1 var(--mono); letter-spacing: 0.04em; cursor: pointer; }
 .btn:hover { border-color: var(--accent); }
 .btn[aria-pressed='true'] { border-color: var(--accent); color: var(--accent); }
-.bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
-.bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 150ms; }
 .note { color: var(--muted); font-size: 12px; margin: 0; }
 
 /* ---- shared view chrome ---- */

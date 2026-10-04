@@ -39,7 +39,9 @@ export function createPrimaryHud(root) {
       threat.dataset.level = stale ? 'stale' : s.threat.level;
       set('level', stale ? 'NO DATA' : LEVEL_TEXT[s.threat.level]);
       const air = s.mode === 'airspace';
-      set('range', air ? fmt(s.range.range / NM, 2, ' NM') : fmt(s.range.range, 2, ' m'));
+      // Ultrasonic sensors are read in inches on the bench, so show both.
+      const metres = fmt(s.range.range, 2, ' m');
+      set('range', air ? fmt(s.range.range / NM, 2, ' NM') : s.range.source === 'ultrasonic' ? `${metres} · ${fmt(s.range.range / 0.0254, 1, ' in')}` : metres);
       set('closing', air ? fmt(s.range.closingSpeed / KT, 0, ' kt') : fmt(s.range.closingSpeed, 2, ' m/s'));
       set('ttc-k', air ? 'Tau' : 'TTC');
       set('ttc', s.range.ttc === null ? '—' : fmt(s.range.ttc, 1, ' s'));
@@ -47,7 +49,7 @@ export function createPrimaryHud(root) {
   };
 }
 
-export function createDiagnostics(root, { onCalibrate, onDeviceTest }) {
+export function createDiagnostics(root, { onDeviceTest }) {
   root.innerHTML = `
     <section class="card">
       <h2>Range</h2>
@@ -58,54 +60,16 @@ export function createDiagnostics(root, { onCalibrate, onDeviceTest }) {
       </dl>
     </section>
     <section class="card">
-      <h2>Acoustic ranging</h2>
-      <dl class="kv">
-        <dt>Status</dt><dd data-k="ac-run">—</dd>
-        <dt>Success (last 20)</dt><dd data-k="ac-rate">—</dd>
-        <dt>Last raw</dt><dd data-k="ac-last">—</dd>
-        <dt>Weakest SNR</dt><dd data-k="ac-snr">—</dd>
-        <dt>Last failure</dt><dd data-k="ac-fail">—</dd>
-      </dl>
-    </section>
-    <section class="card">
-      <h2>Phones</h2>
-      <div class="phones">
-        ${['A', 'B'].map((id) => `
-          <div class="phone" data-phone="${id}">
-            <header><i class="dot" data-k="${id}-on"></i>${id}</header>
-            <dl class="kv">
-              <dt>motion</dt><dd data-k="${id}-motion">—</dd>
-              <dt>audio</dt><dd data-k="${id}-audio">—</dd>
-              <dt>gps</dt><dd data-k="${id}-gps">—</dd>
-              <dt>latency</dt><dd data-k="${id}-lat">—</dd>
-              <dt>rtt</dt><dd data-k="${id}-rtt">—</dd>
-              <dt>state</dt><dd data-k="${id}-moving">—</dd>
-              <dt>north</dt><dd data-k="${id}-north">—</dd>
-            </dl>
-          </div>`).join('')}
-      </div>
+      <h2>Ultrasonic ranging</h2>
+      <dl class="kv" data-k="us-boards"><dt>Boards</dt><dd>waiting for data</dd></dl>
     </section>
     <section class="card">
       <h2>Actuators</h2>
       <div class="devices" data-k="devices"><p class="note">No ESP32 connected.</p></div>
-    </section>
-    <section class="card calib">
-      <h2>Calibration</h2>
-      <p class="note">Hold the phones side by side, speakers and mics uncovered, at the distance below. Then press Calibrate.</p>
-      <div class="row">
-        <input type="number" step="0.01" min="0.01" value="0.10" aria-label="Calibration distance in metres" data-k="cal-d" /> m
-        <button class="btn" data-k="cal-btn">Calibrate</button>
-      </div>
-      <div class="bar"><i data-k="cal-bar"></i></div>
-      <dl class="kv">
-        <dt>State</dt><dd data-k="cal-state">—</dd>
-        <dt>K (speaker↔mic)</dt><dd data-k="cal-k">—</dd>
-      </dl>
     </section>`;
 
   const { el, set } = bind(root);
 
-  el['cal-btn'].addEventListener('click', () => onCalibrate(Number(el['cal-d'].value)));
   el.devices.addEventListener('click', (e) => {
     const id = e.target.closest('[data-test]')?.dataset.test;
     if (id) onDeviceTest(id);
@@ -134,6 +98,7 @@ export function createDiagnostics(root, { onCalibrate, onDeviceTest }) {
           <header><i class="dot" data-on="true"></i><span></span><button class="btn" data-test="">Test</button></header>
           <dl class="kv">${kv([
             ['ip', esc((d.ip ?? '').replace(/^::ffff:/, ''))],
+            ['firmware', esc(d.fw)],
             ['applied', esc(d.applied)],
             ['alert via', esc(d.source)],
             ['mechanism', d.mechanism ? 'ON' : 'off'],
@@ -154,6 +119,24 @@ export function createDiagnostics(root, { onCalibrate, onDeviceTest }) {
     }
   }
 
+  // One row per board: "5.1 in", "no echo" or "NO SIGNAL", the way esp32test/test.py prints them.
+  const US_TEXT = { 'no-echo': 'no echo (check sensor wiring)', 'no-signal': 'NO SIGNAL' };
+  function renderUltrasonic(boards = []) {
+    const rows = boards.length
+      ? boards.map((b) => [`Board ${b.id}`, b.status === 'ok' ? fmt(b.range / 0.0254, 1, ' in') : US_TEXT[b.status]])
+      : [['Boards', 'waiting for data']];
+    const nodes = rows.flatMap(([k, v]) => {
+      const dt = document.createElement('dt');
+      const dd = document.createElement('dd');
+      dt.textContent = k; // board ids come from the device, so never inject them as HTML
+      dd.textContent = v;
+      return [dt, dd];
+    });
+    if (nodes.map((n) => n.textContent).join('|') !== [...el['us-boards'].children].map((n) => n.textContent).join('|')) {
+      el['us-boards'].replaceChildren(...nodes);
+    }
+  }
+
   return {
     update(s, age) {
       if (!s) return;
@@ -164,31 +147,8 @@ export function createDiagnostics(root, { onCalibrate, onDeviceTest }) {
       set('sigma', s.range.sigma === null || s.range.sigma === undefined ? '—' : `±${fmt(s.range.sigma * 100, 1)} cm`);
       set('reason', stale ? 'server state is stale' : REASON_TEXT[s.threat.reason] ?? '—');
 
-      const ac = s.acoustic;
-      set('ac-run', ac.running ? 'running' : 'waiting for both phones');
-      set('ac-rate', `${Math.round(ac.successRate * 100)}%`);
-      set('ac-last', ac.last ? `${fmt(ac.last.distance, 3, ' m')} · ${ac.last.ageMs} ms ago` : '—');
-      set('ac-snr', ac.last ? fmt(Math.min(...Object.values(ac.last.snr)), 1) : '—');
-      set('ac-fail', ac.lastFailure ?? '—');
-
-      for (const id of ['A', 'B']) {
-        const p = s.phones[id];
-        el[`${id}-on`].dataset.on = String(p.connected);
-        set(`${id}-motion`, p.connected ? `${p.rates.motion} Hz` : '—');
-        set(`${id}-audio`, p.connected ? `${p.rates.audio}/s` : '—');
-        set(`${id}-gps`, p.gps ? `±${Math.round(p.gps.acc)} m` : '—');
-        set(`${id}-lat`, p.latencyMs === null ? '—' : `${p.latencyMs} ms`);
-        set(`${id}-rtt`, p.rttMs === null ? '—' : `${p.rttMs} ms`);
-        set(`${id}-moving`, p.connected ? (p.moving ? 'moving' : 'still') : '—');
-        set(`${id}-north`, p.connected ? (p.northAligned ? 'aligned' : 'no compass') : '—');
-      }
-
+      renderUltrasonic(s.ultrasonic?.boards);
       renderDevices(s.devices);
-
-      const c = s.calibration;
-      set('cal-state', c.state === 'collecting' ? `collecting ${Math.round(c.progress * 100)}%` : c.calibrated ? 'calibrated' : 'default K');
-      el['cal-bar'].style.width = `${(c.state === 'collecting' ? c.progress : c.calibrated ? 1 : 0) * 100}%`;
-      set('cal-k', `${fmt(c.K * 100, 1)} cm`);
     },
   };
 }

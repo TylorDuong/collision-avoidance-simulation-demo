@@ -39,8 +39,17 @@ export const config = {
     file: 'data/calibration.json',
   },
 
+  // Ultrasonic sensors on the ESP32 boards (HC-SR04 class), reported over the /device WebSocket.
+  ultrasonic: {
+    minRange: 0.02, // m, readings outside [minRange, maxRange] are treated as "no echo"
+    maxRange: 4.0,
+    freshSeconds: 1, // an accepted reading this recent makes 'ultrasonic' the range source
+    signalTimeoutSeconds: 2, // a board silent this long shows NO SIGNAL
+  },
+
   filter: {
     sigmaAcoustic: 0.03, // m
+    sigmaUltrasonic: 0.02, // m
     qMoving: 1.0, // (m/s²)² white-acceleration process noise while a phone is moving
     qStill: 0.02,
     gateSigma: 3,

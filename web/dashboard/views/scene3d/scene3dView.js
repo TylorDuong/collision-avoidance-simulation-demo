@@ -193,7 +193,9 @@ export function createScene3dView() {
       }
       const air = mode === 'airspace';
       phoneScene.visible = !air;
-      const connected = (id) => !air && s?.phones[id]?.connected;
+      // Live ultrasonic boards stand in for the phones: both nodes are drawn while readings arrive.
+      const ultrasonic = s?.ultrasonic?.last != null && s.ultrasonic.last.ageMs < 2000;
+      const connected = (id) => !air && (s?.phones[id]?.connected || ultrasonic);
 
       if (s) {
         for (const name of Object.keys(ZONE_COLORS)) zones[name].scale.setScalar(s.zones[name].range);
@@ -240,9 +242,9 @@ export function createScene3dView() {
         : air
           ? `Drag to orbit · scroll to zoom · grid squares are 2 NM · altitudes ×${VERTICAL_EXAGGERATION}`
           : !connected('A') || !connected('B')
-          ? `Waiting for phone${!connected('A') && !connected('B') ? 's A and B' : !connected('A') ? ' A' : ' B'}… (or run npm run mock)`
+          ? 'Waiting for the ultrasonic boards… (or run npm run mock)'
           : range === null
-            ? 'Phones connected; waiting for the first range…'
+            ? 'Nodes connected; waiting for the first range…'
             : 'Drag to orbit · scroll to zoom · B is drawn on +X (bearing unknown)';
 
       controls.update();

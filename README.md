@@ -4,7 +4,7 @@ A real-time prototype that measures one-dimensional proximity between two nodes 
 
 The ESP32s are the hardware. The laptop does all the fusion and collision logic, and drives each board's LED and mechanism output.
 
-> **Status.** The dashboard, the TCAS logic, the simulated airspace and the ESP32 actuator link are working. Feeding **ultrasonic readings from the boards into the server is not wired up yet**. Until it is, the demo runs on the simulated airspace (`npm run mock`), and the server's proximity mode still reads from the older phone prototype (see [Legacy phone prototype](#legacy-phone-prototype)).
+> **Status.** The dashboard, the TCAS logic, the simulated airspace and the ESP32 actuator link are working. The server accepts **ultrasonic readings from the boards** over the `/device` WebSocket (see [Ultrasonic sensing](#ultrasonic-sensing)). The firmware for it is written but not yet run on real sensors. The TCAS demo can still run on the simulated airspace (`npm run mock`), and the older phone prototype still works as a second range source (see [Legacy phone prototype](#legacy-phone-prototype)).
 
 **New here?** Follow the step-by-step [setup guide](docs/SETUP.md). It still describes the older phone-based setup for the hotspot and ESP32 steps.
 
@@ -127,10 +127,11 @@ To add a view, implement `{ mount, update, resize, unmount }` and register it as
 
 ## Ultrasonic sensing
 
-Each ESP32 carries one ultrasonic distance sensor (for example an HC-SR04 or a waterproof JSN-SR04T) aimed at the other node. Wiring and firmware for it are **not written yet**. The plan:
+Each ESP32 carries one ultrasonic distance sensor (for example an HC-SR04 or a waterproof JSN-SR04T) aimed at the other node.
 
-- The board triggers the sensor, converts the echo time to metres, and sends `{t:'range', ...}` to the server over the existing `/device` WebSocket. This message isn't in `shared/protocol.js` yet.
-- The server treats it as a range source and feeds the same Kalman filter, so the threat logic and both TCAS displays work unchanged.
+- `firmware/esp32-actuator` triggers the sensor at 10 Hz (`TRIG_PIN` / `ECHO_PIN`, set them to your wiring), converts the echo time to metres, and sends `{t:'range', range}` to the server over the `/device` WebSocket. `range` is `null` when no echo came back.
+- The server (`engine.handleRange`) feeds every reading into the same Kalman filter, with source `ultrasonic`. Both boards measure the same gap, so each reading is an independent measurement. A reading outside 2 cm to 4 m counts as no echo and is not filtered (`ultrasonic` in `server/config.js`). A board silent for 2 s shows NO SIGNAL.
+- The threat logic and both TCAS displays work unchanged. The dashboard's "Ultrasonic ranging" card shows each board's latest reading in inches, "no echo" or "NO SIGNAL". The threat zones are the ones in `server/config.js`.
 - Most HC-SR04 modules run on 5 V and drive `ECHO` at 5 V. Put a voltage divider (for example 1 kΩ and 2 kΩ) on `ECHO` before it reaches an ESP32 GPIO, which is 3.3 V only.
 
 Expect these limits from ultrasonic sensing:
@@ -188,6 +189,7 @@ Optional: run the server with `DEVICE_TOKEN=<secret>` and put the same value in 
 **Testing without hardware:** `npm run mock:esp32` simulates both boards, using the same relay and heartbeat rules over an in-memory radio:
 - `npm run mock:esp32 -- --drop-ws esp32-B@5-15` cuts B's WebSocket from 5 s to 15 s. Watch B switch to "alert via peer".
 - `npm run mock:esp32 -- --drop-peer 20-30` silences ESP-NOW from 20 s to 30 s, so both boards report their peer as lost.
+- `npm run mock:esp32 -- --range` also sends simulated ultrasonic ranges from both boards (closing from 2 m to 0.15 m and back every 30 s, with occasional missed echoes). The dashboard goes through proximate, TA and RA with no phones connected.
 
 ## Threat logic
 
@@ -256,4 +258,4 @@ Running with real iPhones needs a trusted HTTPS certificate on each phone. The p
 - Only distance is measured, not the direction from A to B, and there is no altitude.
 - Ultrasonic sensors have a narrow beam and a short range (about 4 m), and need a clear line of sight to the other node.
 - Reflections from soft or angled surfaces can drop readings or bias them.
-- The ultrasonic firmware and the server's `range` message are not implemented yet.
+- The ultrasonic firmware has not been run on real sensors yet. The server side is tested with `npm run mock:esp32 -- --range`.

@@ -5,6 +5,7 @@
 //   npm run mock:esp32                                   # two boards, esp32-A and esp32-B
 //   npm run mock:esp32 -- --drop-ws esp32-B@5-15         # B's WebSocket is down from 5 s to 15 s
 //   npm run mock:esp32 -- --drop-peer 20-30              # ESP-NOW silent from 20 s to 30 s
+//   npm run mock:esp32 -- --range                        # also send simulated ultrasonic ranges
 //   npm run mock:esp32 -- --ids esp32-A --url ws://192.168.137.1:8080/device --token secret
 
 import WebSocket from 'ws';
@@ -17,6 +18,7 @@ const { values: args } = parseArgs({
     token: { type: 'string', default: '' },
     'drop-ws': { type: 'string', multiple: true, default: [] },
     'drop-peer': { type: 'string', default: '' },
+    range: { type: 'boolean', default: false },
   },
 });
 
@@ -36,6 +38,12 @@ const during = (spec) => {
 const wsDrops = new Map(args['drop-ws'].map((s) => [s.split('@')[0], during(s.split('@')[1])]));
 const peerDropped = args['drop-peer'] ? during(args['drop-peer']) : () => false;
 
+// --range: both boards report the same A–B gap, closing from 2 m to 0.15 m and back every 30 s,
+// each with its own noise and the occasional missed echo, like the real sensors.
+const RANGE_PERIOD_MS = 100;
+const simulatedGap = () => 1.075 + 0.925 * Math.cos((2 * Math.PI * elapsed()) / 30);
+const simulatedRange = () => (Math.random() < 0.05 ? null : Math.round((simulatedGap() + (Math.random() - 0.5) * 0.02) * 1000) / 1000);
+
 const boards = [];
 
 class Board {
@@ -48,6 +56,7 @@ class Board {
     this.testUntil = 0;
     this.sent = '';
     this.lastStatusAt = 0;
+    this.lastRangeAt = 0;
     this.shown = '';
     this.peerWasAlive = false;
   }
@@ -139,6 +148,11 @@ class Board {
     }
     if (peerAlive !== this.peerWasAlive && this.peer) this.log(`peer ${this.peer.id} ${peerAlive ? 'alive' : 'LOST'}`);
     this.peerWasAlive = peerAlive;
+
+    if (args.range && this.wsConnected && now - this.lastRangeAt >= RANGE_PERIOD_MS) {
+      this.lastRangeAt = now;
+      this.send({ t: 'range', range: simulatedRange() });
+    }
 
     const status = JSON.stringify([level, source, peerAlive]);
     if (this.wsConnected && (status !== this.sent || now - this.lastStatusAt > STATUS_REFRESH_MS)) {
