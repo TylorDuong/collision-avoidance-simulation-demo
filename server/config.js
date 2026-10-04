@@ -1,6 +1,10 @@
 // Central tunables. Override ports via env: HTTPS_PORT, HTTP_PORT.
 
 const IN = 0.0254; // m per inch
+const NM = 1852; // m
+const FT = 0.3048; // m
+const FPM = FT / 60; // m/s
+const G = 9.80665; // m/s²
 
 export const config = {
   httpsPort: Number(process.env.HTTPS_PORT) || 8443,
@@ -50,9 +54,25 @@ export const config = {
   },
 
   // Live demo: the real ultrasonic gap between A and B is drawn on the TCAS demo display (NM,
-  // kt, head-on on one axis) at this scale. Editable from the dashboard; saved to `file`.
+  // kt, head-on on one axis). The scale is piecewise (server/live.js): each zone in `zones`
+  // (real inches) lands on its real-world TCAS radius here, so the picture shows TCAS
+  // dimensions while the boards keep zones that work by hand.
   live: {
-    nmPerInch: 0.2, // displayed NM per real inch of ultrasonic distance (20 in -> 4 NM, fits the 5 NM range)
+    // Real-world TCAS zones (horizontal radius, vertical limit): RA 0.3–1.1 NM / 300–700 ft,
+    // TA 0.55–1.4 NM / 600–1200 ft, proximate 6 NM / ±1200 ft. The upper ends are used so the
+    // RA and TA zones are visible on the display.
+    displayZones: { proximate: 6 * NM, TA: 1.4 * NM, RA: 1.1 * NM },
+    verticalZones: { proximate: 1200 * FT, TA: 850 * FT, RA: 700 * FT },
+    // Sample altitudes (the boards measure distance only): A at `altitude`, B `relAlt` from
+    // it. An RA climbs / descends them apart to the RA vertical limit, then they return.
+    sample: {
+      altitude: 8000 * FT, // like tools/sim/airspace.js, so the 3D view frames it
+      relAlt: -300 * FT, // B 300 ft below A: A sees "−03", B sees "+03"
+      raRate: 1500 * FPM,
+      raAccel: 0.25 * G,
+      returnRate: 1000 * FPM,
+      normalAccel: 0.1 * G,
+    },
   },
   settings: {
     file: 'data/settings.json',

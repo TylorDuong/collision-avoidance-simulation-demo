@@ -1,6 +1,7 @@
-// User-adjustable live-demo settings: the ratio that maps the real ultrasonic gap onto the TCAS
-// display, and where the threat levels start. Defaults live in server/config.js (`live`,
-// `zones`); the dashboard edits them over the WebSocket and they are saved to a JSON file.
+// User-adjustable live-demo settings: where the threat levels start on the real ultrasonic gap
+// (which also sets how that gap is drawn on the TCAS display, see server/live.js). Defaults
+// live in server/config.js (`zones`); the dashboard edits them over the WebSocket and they are
+// saved to a JSON file.
 // Distances are inches in the UI and in this file's wire format, metres inside `cfg.zones`.
 
 import fs from 'node:fs';
@@ -9,7 +10,6 @@ import path from 'node:path';
 export const INCH = 0.0254; // m
 
 const LIMITS = {
-  nmPerInch: [0.001, 10],
   proximateIn: [0.1, 1000],
   taIn: [0.1, 1000],
   raIn: [0.1, 1000],
@@ -17,11 +17,10 @@ const LIMITS = {
   raTtc: [0.1, 600],
 };
 
-/** Current settings of `cfg` in UI units: { nmPerInch, proximateIn, taIn, raIn, taTtc, raTtc }. */
+/** Current settings of `cfg` in UI units: { proximateIn, taIn, raIn, taTtc, raTtc }. */
 export function readSettings(cfg) {
   const z = cfg.zones;
   return {
-    nmPerInch: cfg.live.nmPerInch,
     proximateIn: z.proximate.range / INCH,
     taIn: z.TA.range / INCH,
     raIn: z.RA.range / INCH,
@@ -48,7 +47,6 @@ export function applySettings(cfg, input) {
   }
   if (next.raTtc > next.taTtc) return { ok: false, error: 'RA time must not exceed TA time' };
 
-  cfg.live.nmPerInch = next.nmPerInch;
   cfg.zones.proximate.range = next.proximateIn * INCH;
   cfg.zones.TA.range = next.taIn * INCH;
   cfg.zones.RA.range = next.raIn * INCH;

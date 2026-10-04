@@ -2,8 +2,9 @@
 // advisory text (TCAS II v7.1 aural annunciations, booklet Table 4), the RA guidance for
 // the vertical speed indicator (red = rates to avoid, green = rate to fly, Table 3) and
 // sound cues on transitions.
-// Still simplified: only the initial Climb / Descend RA, no strengthening, weakening,
-// reversal or preventive RAs.
+// Still simplified: the initial Climb / Descend RA, and its weakening to Level Off once the
+// own ship reports safe separation reached (ownship.ra.remaining === 0, live demo); no
+// strengthening or preventive RAs.
 
 import { TCAS_COLORS } from './symbols.js';
 
@@ -18,6 +19,11 @@ const RA_VSI = {
   down: { green: [-2, -1.5], red: [[-1.5, VSI_MAX]] },
 };
 const RA_TEXT = { up: 'CLIMB, CLIMB', down: 'DESCEND, DESCEND' };
+// Level Off after a climb: hold about level, avoid descending back toward the intruder.
+const LEVEL_OFF_VSI = {
+  up: { green: [0, 0.3], red: [[-VSI_MAX, 0]] },
+  down: { green: [-0.3, 0], red: [[0, VSI_MAX]] },
+};
 
 /** Sound cue hook. No-op for now; wire up Web Audio / speechSynthesis later. */
 export function announce(type) {
@@ -39,6 +45,7 @@ export class AdvisoryTracker {
   constructor() {
     this.level = 'other';
     this.sense = null; // latched for the life of an RA
+    this.levelOff = false; // the RA has weakened to Level Off
     this.clearUntil = 0;
   }
 
@@ -46,8 +53,9 @@ export class AdvisoryTracker {
    * @param {Array} traffic perspective traffic list
    * @param {number} now ms
    * @param {object} [ownship] perspective own ship: `ra.sense` (the sense its TCAS selected)
-   *   is used when present, and mode 'TA ONLY' downgrades RAs to TAs, 'STBY' shows nothing.
-   * @returns {{ banner: {text: string, color: string, level: string, vsi?: object} | null, primary: object | null }}
+   *   is used when present, `ra.remaining` (m still to climb / descend, 0 = level off) is
+   *   passed on, and mode 'TA ONLY' downgrades RAs to TAs, 'STBY' shows nothing.
+   * @returns {{ banner: {text: string, color: string, level: string, vsi?: object, remaining?: number|null} | null, primary: object | null }}
    */
   update(traffic, now, ownship = null) {
     const mode = ownship?.mode ?? 'TA/RA';
@@ -74,9 +82,16 @@ export class AdvisoryTracker {
       this.level = level;
     }
 
+    const remaining = level === 'RA' ? ownship?.ra?.remaining ?? null : null;
+    if (level === 'RA' && remaining === 0 && !this.levelOff) announce('LEVEL_OFF');
+    this.levelOff = level === 'RA' && remaining === 0;
+
     let banner = null;
-    if (level === 'RA') banner = { text: RA_TEXT[this.sense], color: TCAS_COLORS.RA, level, sense: this.sense, vsi: RA_VSI[this.sense] };
-    else if (level === 'TA') banner = { text: 'TRAFFIC, TRAFFIC', color: TCAS_COLORS.TA, level };
+    if (level === 'RA') {
+      banner = this.levelOff
+        ? { text: 'LEVEL OFF, LEVEL OFF', color: TCAS_COLORS.RA, level, sense: this.sense, vsi: LEVEL_OFF_VSI[this.sense], remaining }
+        : { text: RA_TEXT[this.sense], color: TCAS_COLORS.RA, level, sense: this.sense, vsi: RA_VSI[this.sense], remaining };
+    } else if (level === 'TA') banner = { text: 'TRAFFIC, TRAFFIC', color: TCAS_COLORS.TA, level };
     else if (now < this.clearUntil) banner = { text: 'CLEAR OF CONFLICT', color: TCAS_COLORS.clear, level: 'clear' };
     return { banner, primary };
   }

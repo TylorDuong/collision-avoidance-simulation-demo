@@ -1,9 +1,9 @@
 // HUD in two parts: primary telemetry pinned in the top bar (threat, range, closing speed,
-// TTC) and the technical diagnostics in the collapsible bottom drawer. In airspace mode
+// TTC, RA advisory) and the technical diagnostics in the collapsible bottom drawer. In airspace mode
 // (TCAS demo simulator) the top bar shows the A–B pair in NM, knots and range tau.
 
 const LEVEL_TEXT = { other: 'OTHER', proximate: 'PROXIMATE', TA: 'TA', RA: 'RA' };
-const REASON_TEXT = { range: 'inside distance threshold', ttc: 'time-to-collision threshold', tau: 'TCAS tau / DMOD (simulator)', 'no-data': 'no range data' };
+const REASON_TEXT = { range: 'inside distance threshold', ttc: 'time-to-collision threshold', tau: 'TCAS tau / DMOD (simulator)', 'no-data': 'no range data', vertical: 'outside vertical limit (sample altitude)' };
 const NM = 1852;
 const KT = NM / 3600;
 const STALE_MS = 2000;
@@ -28,9 +28,25 @@ export function createPrimaryHud(root) {
     <div class="metric threat" data-level="other"><span class="k">Threat</span><span class="v" data-k="level">—</span></div>
     <div class="metric"><span class="k">Range</span><span class="v" data-k="range">—</span></div>
     <div class="metric"><span class="k">Closing</span><span class="v" data-k="closing">—</span></div>
-    <div class="metric"><span class="k" data-k="ttc-k">TTC</span><span class="v" data-k="ttc">—</span></div>`;
+    <div class="metric"><span class="k" data-k="ttc-k">TTC</span><span class="v" data-k="ttc">—</span></div>
+    <div class="metric advisory" data-active="false"><span class="k">Advisory</span><span class="v" data-k="advisory">—</span></div>`;
   const { el, set } = bind(root);
   const threat = root.querySelector('.threat');
+  const advisory = root.querySelector('.advisory');
+
+  // Each TCAS aircraft's RA: "A ▲ 61 m · B ▼ 61 m" while climbing / descending to safe
+  // separation, "LEVEL OFF" once there, the sense alone when no distance is reported.
+  const raText = (s) => {
+    const parts = [];
+    for (const id of ['A', 'B']) {
+      const ra = s.perspectives?.[id]?.ownship?.ra;
+      if (!ra?.sense) continue;
+      const arrow = ra.sense === 'up' ? '▲' : '▼';
+      const rest = ra.remaining === 0 ? 'LEVEL OFF' : ra.remaining == null ? (ra.sense === 'up' ? 'CLIMB' : 'DESCEND') : `${Math.ceil(ra.remaining)} m`;
+      parts.push(`${id} ${arrow} ${rest}`);
+    }
+    return parts.join(' · ');
+  };
 
   return {
     update(s, age) {
@@ -47,13 +63,15 @@ export function createPrimaryHud(root) {
       set('closing', air ? fmt(per(s.range.closingSpeed, KT), 0, ' kt') : fmt(s.range.closingSpeed, 2, ' m/s'));
       set('ttc-k', air ? 'Tau' : 'TTC');
       set('ttc', s.range.ttc === null ? '—' : fmt(s.range.ttc, 1, ' s'));
+      const ra = stale ? '' : raText(s);
+      advisory.dataset.active = String(!!ra);
+      set('advisory', ra || '—');
     },
   };
 }
 
 // Live demo settings form: field -> [label, input step]. Names match the server's `settings` message.
 const SETTING_FIELDS = {
-  nmPerInch: ['NM per inch', 0.01],
   proximateIn: ['Proximate at (in)', 1],
   taIn: ['TA at (in)', 1],
   raIn: ['RA at (in)', 1],
@@ -76,8 +94,8 @@ export function createDiagnostics(root, { onDeviceTest, onSettings }) {
       <dl class="kv" data-k="us-boards"><dt>Boards</dt><dd>waiting for data</dd></dl>
     </section>
     <section class="card settings">
-      <h2>Live demo scale and zones</h2>
-      <p class="note">Maps the real gap between the planes onto the TCAS display, and sets where each threat level starts.</p>
+      <h2>Live demo zones</h2>
+      <p class="note">Where each threat level starts on the real gap between the planes. Each zone is drawn on the TCAS display at its real-world radius.</p>
       <div class="fields">${Object.entries(SETTING_FIELDS).map(([name, [label, step]]) => `
         <label>${label}<input type="number" min="0" step="${step}" data-k="set-${name}" data-field="${name}" /></label>`).join('')}
       </div>
@@ -108,9 +126,10 @@ export function createDiagnostics(root, { onDeviceTest, onSettings }) {
         if (input.value !== v && document.activeElement !== input) input.value = v;
       }
     }
-    // Where each level starts on the display, so the scale can be checked at a glance.
-    const nm = (inches) => fmt(inches * cfg.nmPerInch, 2, ' NM');
-    set('set-msg', cfg.error ?? `proximate ${nm(cfg.proximateIn)} · TA ${nm(cfg.taIn)} · RA ${nm(cfg.raIn)}`);
+    // Where each level starts on the display, so the mapping can be checked at a glance.
+    const z = (label, inches, nm) => `${label} ${fmt(inches, 1, ' in')} = ${nm} NM`;
+    const nm = cfg.zonesNm ?? {};
+    set('set-msg', cfg.error ?? [z('RA', cfg.raIn, nm.RA), z('TA', cfg.taIn, nm.TA), z('proximate', cfg.proximateIn, nm.proximate)].join(' · '));
     el['set-msg'].dataset.error = String(!!cfg.error);
   }
 

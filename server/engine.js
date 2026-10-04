@@ -15,6 +15,7 @@ import { ClockSync } from './fusion/clock.js';
 import { gpsRange, gpsRelativeAltitude } from './fusion/gps.js';
 import { CollisionEvaluator, selectRaSenses } from './collision.js';
 import { INCH, applySettings, loadSettings, readSettings, saveSettings } from './settings.js';
+import { LiveVertical, liveScale } from './live.js';
 
 const NM = 1852; // m
 
@@ -58,7 +59,7 @@ export class Engine {
   constructor(config, { now = () => performance.now() / 1000, persist = true } = {}) {
     // The live settings (scale and zones) are edited at runtime, so this engine gets its own
     // copy of them rather than mutating the shared config.
-    this.cfg = { ...config, zones: structuredClone(config.zones), live: { ...config.live } };
+    this.cfg = { ...config, zones: structuredClone(config.zones) };
     this.now = now;
     this.persist = persist;
     this.settingsError = null; // why the last settings update was rejected, if it was
@@ -79,6 +80,8 @@ export class Engine {
     this.raSenses = null; // { A, B } complementary senses, latched for the life of an RA
     this.listeners = { alert: [] };
     this.airspace = null; // { data, receivedAt } from the airspace simulator
+    this.vertical = new LiveVertical(this.cfg.live); // live demo's sample altitudes
+    this.lastTickAt = null;
 
     this.ranging = new RangingSession(config.ranging, {
       send: (id, msg) => this._send(id, msg),
@@ -185,13 +188,14 @@ export class Engine {
   _settingsState() {
     const round = (v) => Math.round(v * 100) / 100;
     const s = readSettings(this.cfg);
+    const nm = (k) => round(this.cfg.live.displayZones[k] / NM);
     return {
-      nmPerInch: s.nmPerInch,
       proximateIn: round(s.proximateIn),
       taIn: round(s.taIn),
       raIn: round(s.raIn),
       taTtc: s.taTtc,
       raTtc: s.raTtc,
+      zonesNm: { proximate: nm('proximate'), TA: nm('TA'), RA: nm('RA') }, // where each zone is drawn
       error: this.settingsError,
     };
   }
@@ -209,6 +213,11 @@ export class Engine {
 
   _airspaceLive(t = this.now()) {
     return this.airspace !== null && t - this.airspace.receivedAt < this.cfg.airspaceFreshSeconds;
+  }
+
+  // Live ultrasonic demo: boards have reported and no simulator is streaming.
+  _liveActive(t = this.now()) {
+    return !this._airspaceLive(t) && this.ultrasonic.boards.size > 0;
   }
 
   // ---- calibration ----------------------------------------------------------------
@@ -293,6 +302,8 @@ export class Engine {
 
   tick() {
     const t = this.now();
+    const dt = this.lastTickAt === null ? 0 : t - this.lastTickAt;
+    this.lastTickAt = t;
     this.ranging.tick();
 
     if (t - this.lastPingAt >= this.cfg.pingIntervalMs / 1000) {
@@ -313,14 +324,19 @@ export class Engine {
       const est = this.filter.estimate(t, moving);
       const source = this._rangeSource(t);
       const valid = est !== null && source !== 'stale';
-      this.threat = this.collision.evaluate(
+      const horizontal = this.collision.evaluate(
         { range: est ? est.range : null, closingSpeed: est ? -est.rate : 0, valid },
         t,
       );
+      // Live demo: the sample altitudes apply the TCAS vertical limits and pick the RA senses.
+      const live = this._liveActive(t);
+      this.threat = live ? this.vertical.combine(horizontal) : horizontal;
       this.estimate = est;
       this.source = source;
+      const relAlt = live ? this.vertical.relAlt : gpsRelativeAltitude(this.phones.A.gps, this.phones.B.gps);
       if (this.threat.threat !== 'RA') this.raSenses = null;
-      else this.raSenses ??= selectRaSenses(gpsRelativeAltitude(this.phones.A.gps, this.phones.B.gps), this.cfg.ra.senseAltThreshold);
+      else this.raSenses ??= selectRaSenses(relAlt, this.cfg.ra.senseAltThreshold);
+      if (live) this.vertical.step(dt, this.raSenses);
     }
     if (this.threat.threat !== prev) {
       for (const id of PHONE_IDS) this._send(id, { t: MSG.ALERT, level: this.threat.threat });
@@ -363,24 +379,28 @@ export class Engine {
 
   /**
    * Live demo picture: the real ultrasonic gap on one axis, drawn as the TCAS demo's airspace.
-   * A and B fly head-on (A east, B west), `nmPerInch` displayed NM per real inch apart, each
-   * dead ahead of the other (bearing 0), no altitude. Everything here is in display units
+   * A and B fly head-on (A east, B west), each dead ahead of the other (bearing 0). The gap is
+   * drawn through liveScale, so each zone boundary sits on its real-world TCAS radius, and
+   * the altitudes are the sample ones from LiveVertical. Everything here is in display units
    * (metres of the simulated airspace, like tools/sim/airspace.js); the real gap is in
    * `live.range`. Threat levels still come from the real-unit zones.
    * @param {{ range, rangeRate, source }} real the filtered real range (m, m/s)
    */
   _liveFrame(real, t) {
-    const k = (this.cfg.live.nmPerInch * NM) / INCH; // displayed metres per real metre
+    const display = this.cfg.live.displayZones;
+    const scale = liveScale(this.cfg.zones, display);
     const usable = real.range !== null && real.source !== 'stale' && real.source !== 'none'; // no frozen positions
-    const sep = usable ? real.range * k : null;
-    const rate = usable ? real.rangeRate * k : null;
+    const sep = usable ? scale.toDisplay(real.range) : null;
+    const rate = usable ? real.rangeRate * scale.slope(real.range) : null;
     const gs = usable ? Math.abs(rate) / 2 : null; // each node covers half the closing speed
     const senses = this.raSenses;
+    const { alt, vs } = this.vertical;
+    const remaining = senses ? this.vertical.remaining() : null;
 
     const aircraft = usable
       ? [
-          { id: 'A', tcas: true, x: -sep / 2, y: 0, alt: null, trk: 90, gs, vs: 0, ra: senses ? senses.A : null },
-          { id: 'B', tcas: true, x: sep / 2, y: 0, alt: null, trk: 270, gs, vs: 0, ra: senses ? senses.B : null },
+          { id: 'A', tcas: true, x: -sep / 2, y: 0, alt: alt.A, trk: 90, gs, vs: vs.A, ra: senses ? senses.A : null },
+          { id: 'B', tcas: true, x: sep / 2, y: 0, alt: alt.B, trk: 270, gs, vs: vs.B, ra: senses ? senses.B : null },
         ]
       : [];
     const picture = (ownId, otherId, heading) => ({
@@ -390,13 +410,14 @@ export class Engine {
         groundSpeed: gs,
         trueAirspeed: null,
         wind: null,
-        altitude: null,
-        verticalSpeed: null,
+        altitude: alt[ownId],
+        verticalSpeed: vs[ownId],
         mode: 'TA/RA',
-        ra: senses ? { sense: senses[ownId], intruder: otherId } : null,
+        // remaining: metres still to climb / descend to safe separation (0: level off).
+        ra: senses ? { sense: senses[ownId], intruder: otherId, remaining, target: this.vertical.safeSeparation } : null,
       },
       traffic: this._nodePresent(otherId, t)
-        ? [{ id: otherId, range: sep, rangeRate: rate, bearing: 0, relAlt: null, relAltRate: null, threat: this.threat.threat }]
+        ? [{ id: otherId, range: sep, rangeRate: rate, bearing: 0, relAlt: alt[otherId] - alt[ownId], relAltRate: vs[otherId], threat: this.threat.threat }]
         : [],
       nav: null,
     });
@@ -404,7 +425,11 @@ export class Engine {
       aircraft,
       perspectives: { A: picture('A', 'B', 90), B: picture('B', 'A', 270) },
       range: { range: sep, rangeRate: rate, closingSpeed: usable ? -rate : null, sigma: null, ttc: this.threat.ttc, source: real.source },
-      live: { nmPerInch: this.cfg.live.nmPerInch, scale: k, range: usable ? real.range : null },
+      live: {
+        range: usable ? real.range : null,
+        // Each zone's real start and where it is drawn, outermost first.
+        zones: ['proximate', 'TA', 'RA'].map((level) => ({ level, in: this.cfg.zones[level].range / INCH, nm: display[level] / NM })),
+      },
     };
   }
 
@@ -441,7 +466,7 @@ export class Engine {
         }
       : { range: null, rangeRate: null, closingSpeed: null, sigma: null, ttc: null, source: this.source ?? 'none' };
     // Ultrasonic boards present (and no simulator): show the demo UI with the real gap scaled in.
-    const live = !sim && this.ultrasonic.boards.size > 0 ? this._liveFrame(real, t) : null;
+    const live = this._liveActive(t) ? this._liveFrame(real, t) : null;
     const range = sim
       ? {
           range: sim.pair.range,

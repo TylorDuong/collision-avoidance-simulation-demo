@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { Engine } from '../server/engine.js';
 import { config } from '../server/config.js';
 import { selectRaSenses } from '../server/collision.js';
+import { liveScale } from '../server/live.js';
 
 function setup() {
   let simTime = 0;
@@ -135,6 +136,7 @@ test('the other node stays on both displays between accepted readings', () => {
   for (const [own, other] of [['A', 'B'], ['B', 'A']]) {
     assert.equal(s.perspectives[own].traffic.length, 1);
     assert.equal(s.perspectives[own].traffic[0].id, other);
-    assert.ok(Math.abs(s.perspectives[own].traffic[0].range - 1.0 * s.live.scale) < 0.1 * s.live.scale); // same distance on both
+    const expected = liveScale(config.zones, config.live.displayZones).toDisplay(1.0);
+    assert.ok(Math.abs(s.perspectives[own].traffic[0].range - expected) < 0.1 * expected); // same distance on both
   }
 });

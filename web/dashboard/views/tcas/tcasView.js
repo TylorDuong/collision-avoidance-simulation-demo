@@ -12,6 +12,10 @@
 //     at its range on a fixed straight-ahead axis with its distance written beside it, and
 //     TAs/RAs are also reported in writing ("RA 0.28 +02"). Under the traffic, own route in green
 //     (perspective.nav, never processed as traffic).
+//   - RA cue: green chevrons left of own ship pointing the way to fly (up = climb, down =
+//     descend) with the metres still to go to safe separation counting down (live demo),
+//     then LEVEL OFF. Live demo only: faint rings where each threat zone starts, at its
+//     real-world TCAS radius (state.live.zones).
 //   - Right edge: vertical speed tape (0 .5 1 2 4 6 thousand fpm) with the own-ship pointer.
 //     During an RA, red bands mark the rates to avoid and a green band the rate to fly.
 //   - Overlay: GS / TAS / wind (top left), active waypoint course, distance and time to go
@@ -34,6 +38,9 @@ const BOTTOM = 66; // status annunciations + range / altitude-filter buttons
 const SIDE = 48; // vertical speed tape (reserved on both sides to keep the rose centred)
 const ROUTE_CLIP = 0.78; // route drawn out to this fraction of R, inside the compass numerals
 const RING_LABEL_BEARING = 315; // range ring labels along the upper-left ray (deg from up)
+const ZONE_LABEL_BEARING = { proximate: 135, TA: 135, RA: 225 }; // TA and RA rings are close: label them apart
+const ZONE_LABEL = { proximate: 'PROX', TA: 'TA', RA: 'RA' };
+const RA_CUE_STEP_MS = 250; // the chevrons light up one after another in the direction to fly
 // Range-only traffic (phones / ultrasonic boards: no bearing) is drawn at its range on this
 // fixed relative bearing, straight ahead. Its direction is not observable.
 const NO_BEARING_AXIS = 0;
@@ -311,6 +318,85 @@ export function createTcasView({ ownId = 'A' } = {}) {
     ctx.restore();
   }
 
+  // Live demo: where each threat zone starts, drawn faint and dashed in the level's colour at
+  // its real-world radius, so the picture can be read against the TCAS dimensions.
+  function drawZoneRings(cx, cy, Rt, zones, fs) {
+    if (!zones) return;
+    const size = Math.max(9, fs - 4);
+    ctx.save();
+    ctx.lineWidth = 1.2;
+    for (const z of zones) {
+      const range = z.nm * units.range;
+      if (range > rangeScale * units.range) continue;
+      const color = TCAS_COLORS[z.level];
+      ctx.setLineDash([2, 4]);
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = color;
+      circle(cx, cy, toScreen(cx, cy, Rt, range, 0).r);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.9;
+      const bearing = ZONE_LABEL_BEARING[z.level];
+      const p = toScreen(cx, cy, Rt, range, bearing);
+      text(`${ZONE_LABEL[z.level]} ${z.nm}`, p.x + (bearing > 180 ? -3 : 3), p.y + 3, { color, size, align: bearing > 180 ? 'right' : 'left', baseline: 'top' });
+    }
+    ctx.restore();
+  }
+
+  // ---- RA cue --------------------------------------------------------------------------
+
+  // Three stacked green chevrons left of own ship pointing the way to fly, the sense below
+  // them and, when the own ship reports it (live demo), the metres still to climb / descend
+  // to safe separation. At safe separation: a level bar and LEVEL OFF.
+  function drawRaCue(banner, cx, cy, R, now) {
+    if (banner?.level !== 'RA') return;
+    const color = TCAS_COLORS.vsiGreen;
+    const x = cx - R * 0.42;
+    const w = R * 0.09; // chevron half-width
+    const h = w * 0.6; // chevron height
+    const gap = R * 0.075;
+    const y0 = cy - R * 0.2; // middle chevron
+    const levelOff = banner.text.startsWith('LEVEL OFF');
+    const up = banner.sense === 'up';
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(3, R * 0.022);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (levelOff) {
+      for (const dy of [-gap * 0.35, gap * 0.35]) {
+        ctx.beginPath();
+        ctx.moveTo(x - w, y0 + dy);
+        ctx.lineTo(x + w, y0 + dy);
+        ctx.stroke();
+      }
+    } else {
+      const lit = Math.floor(now / RA_CUE_STEP_MS) % 3; // 0 = the chevron furthest back
+      for (let i = 0; i < 3; i++) {
+        const y = y0 + (up ? 1 - i : i - 1) * gap; // i = 0 is the rear chevron
+        const d = up ? 1 : -1;
+        ctx.globalAlpha = i === lit ? 1 : 0.45;
+        ctx.beginPath();
+        ctx.moveTo(x - w, y + (d * h) / 2);
+        ctx.lineTo(x, y - (d * h) / 2);
+        ctx.lineTo(x + w, y + (d * h) / 2);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+    const size = Math.max(11, Math.round(R * 0.07));
+    const label = levelOff ? 'LEVEL OFF' : up ? 'CLIMB' : 'DESCEND';
+    let y = y0 + gap * 1.5 + size * 0.9;
+    text(label, x, y, { color, size, align: 'center', baseline: 'middle' });
+    const remaining = banner.remaining;
+    if (!levelOff && known(remaining)) {
+      y += size * 1.35;
+      text(`${Math.ceil(remaining)} m`, x, y, { color, size: Math.round(size * 1.35), align: 'center', baseline: 'middle' });
+      text('TO SAFE SEP', x, y + size * 1.1, { color: TCAS_COLORS.dim, size: Math.max(9, size - 4), align: 'center', baseline: 'middle' });
+    }
+    ctx.restore();
+  }
+
   // ---- navigation route ----------------------------------------------------------------
 
   // Own flight plan from the FROM waypoint on, on the same range scale as the traffic and
@@ -454,6 +540,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     drawBezel(cx, cy, R);
     drawCompass(cx, cy, R, heading, mode === 'airspace' ? 'TRU' : 'MAG');
     drawRangeRings(cx, cy, Rt, fs);
+    if (!stale) drawZoneRings(cx, cy, Rt, s.live?.zones, fs);
     drawRoute(cx, cy, R, Rt, sym, nav);
     drawOwnship(ctx, cx, cy, sym * 1.6);
     const boxAngle = (38 * Math.PI) / 180;
@@ -475,6 +562,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     noBearing.forEach((t, i) => {
       boxedText(formatNoBearing(t, units), cx, cy + Rt * 0.55 + i * nbSize * 1.9, { color: TCAS_COLORS[t.threat], size: nbSize, border: null });
     });
+    drawRaCue(banner, cx, cy, R, now);
 
     drawVsiTape(W - 16 * ui - side / 2 + 8 * ui, cy, Math.max(10, Math.min(R * 0.62, (H - top - bottom) / 2 - fs * 2)), banner?.vsi, own, fs);
     drawFlightData(own, fs);

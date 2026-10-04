@@ -41,6 +41,20 @@ test('RA carries IVSI guidance: green rate to fly, red rates to avoid', () => {
   assert.equal(new AdvisoryTracker().update(traffic('TA'), 0).banner.vsi, undefined);
 });
 
+test('the RA carries the metres still to go and weakens to Level Off at safe separation', () => {
+  const a = new AdvisoryTracker();
+  const climb = a.update(traffic('RA', -0.1), 0, { ra: { sense: 'up', remaining: 42.5 } }).banner;
+  assert.equal(climb.text, 'CLIMB, CLIMB');
+  assert.equal(climb.remaining, 42.5);
+  const level = a.update(traffic('RA', -0.1), 100, { ra: { sense: 'up', remaining: 0 } }).banner;
+  assert.equal(level.text, 'LEVEL OFF, LEVEL OFF');
+  assert.equal(level.sense, 'up');
+  assert.deepEqual(level.vsi, { green: [0, 0.3], red: [[-6, 0]] });
+  assert.equal(a.update(traffic('other'), 200).banner.text, 'CLEAR OF CONFLICT');
+  // The simulator reports no remaining distance: plain Climb, no count.
+  assert.equal(new AdvisoryTracker().update(traffic('RA', -0.1), 0, { ra: { sense: 'up' } }).banner.remaining, null);
+});
+
 test('the own-ship TCAS sense and operating mode drive the advisory', () => {
   const a = new AdvisoryTracker();
   // Own TCAS chose "down" even though geometry alone would say "up".

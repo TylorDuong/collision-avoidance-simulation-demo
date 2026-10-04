@@ -99,6 +99,8 @@ body {
 .metric.threat[data-level='proximate'] .v { color: var(--proximate); border-color: var(--proximate); }
 .metric.threat[data-level='TA'] .v { color: var(--ta); border-color: var(--ta); background: color-mix(in srgb, var(--ta) 14%, transparent); }
 .metric.threat[data-level='RA'] .v { color: var(--ra); border-color: var(--ra); background: color-mix(in srgb, var(--ra) 18%, transparent); }
+.metric.advisory .v { color: var(--muted); }
+.metric.advisory[data-active='true'] .v { color: var(--ok); }
 
 /* ---- diagnostics drawer ---- */
 #hud-drawer { border-top: 1px solid var(--line); background: var(--panel); }
