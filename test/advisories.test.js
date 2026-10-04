@@ -79,16 +79,15 @@ test('aircraft units: hundreds of feet, 500 fpm trend, NM', () => {
 });
 
 test('data tag and no-bearing formatting', () => {
+  const ft = 0.3048;
+  const fpm = ft / 60;
   assert.equal(formatRelAlt(null), '');
-  assert.equal(formatRelAlt(0.02), '00');
-  assert.equal(formatRelAlt(0.2), '+02');
-  assert.equal(formatRelAlt(-0.5), '−05');
-  assert.equal(formatRelAlt(50), '+99');
-  assert.equal(trendGlyph(0.05), '');
-  assert.equal(trendGlyph(0.3), '↑');
-  assert.equal(trendGlyph(-0.3), '↓');
-  assert.equal(formatNoBearing({ threat: 'RA', range: 0.284, relAlt: null, relAltRate: null }), 'RA 0.28');
-  assert.equal(formatNoBearing({ threat: 'TA', range: 0.61, relAlt: 0.2, relAltRate: -0.2 }), 'TA 0.61 +02↓');
+  assert.equal(formatRelAlt(200 * ft), '+02');
+  assert.equal(formatRelAlt(20000 * ft), '+99');
+  assert.equal(trendGlyph(null), '');
+  assert.equal(trendGlyph(700 * fpm), '↑');
+  assert.equal(formatNoBearing({ threat: 'RA', range: 0.3 * 1852, relAlt: null, relAltRate: null }), 'RA 0.3');
+  assert.equal(formatNoBearing({ threat: 'TA', range: 2 * 1852, relAlt: 200 * ft, relAltRate: -700 * fpm }), 'TA 2.0 +02↓');
 });
 
 test('range rings: several evenly spaced rings, the last at the selected range', () => {
@@ -96,8 +95,8 @@ test('range rings: several evenly spaced rings, the last at the selected range',
   assert.deepEqual(rangeRings(10), [2.5, 5, 7.5, 10]);
   assert.deepEqual(rangeRings(5), [1, 2, 3, 4, 5]);
   assert.deepEqual(rangeRings(40), [10, 20, 30, 40]);
-  assert.deepEqual(rangeRings(1), [0.25, 0.5, 0.75, 1]); // phones, metres
-  for (const r of [...UNITS.airspace.ranges, ...UNITS.phones.ranges]) {
+  assert.deepEqual(rangeRings(1), [0.25, 0.5, 0.75, 1]);
+  for (const r of UNITS.airspace.ranges) {
     const rings = rangeRings(r);
     assert.ok(rings.length >= 3 && rings.length <= 5, `${r}: ${rings}`);
     assert.equal(rings.at(-1), r);

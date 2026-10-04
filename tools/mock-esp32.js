@@ -6,6 +6,7 @@
 //   npm run mock:esp32 -- --drop-ws esp32-B@5-15         # B's WebSocket is down from 5 s to 15 s
 //   npm run mock:esp32 -- --drop-peer 20-30              # ESP-NOW silent from 20 s to 30 s
 //   npm run mock:esp32 -- --range                        # also send simulated ultrasonic ranges
+//                                                        # (pace set by the dashboard's speed slider)
 //   npm run mock:esp32 -- --ids esp32-A --url ws://192.168.137.1:8080/device --token secret
 
 import WebSocket from 'ws';
@@ -38,10 +39,26 @@ const during = (spec) => {
 const wsDrops = new Map(args['drop-ws'].map((s) => [s.split('@')[0], during(s.split('@')[1])]));
 const peerDropped = args['drop-peer'] ? during(args['drop-peer']) : () => false;
 
-// --range: both boards report the same A–B gap, closing from 2 m to 0.15 m and back every 30 s,
-// each with its own noise and the occasional missed echo, like the real sensors.
+// --range: both boards report the same A–B gap, closing from 2 m to 0.15 m and back every 30 s
+// of mock time, each with its own noise and the occasional missed echo, like the real sensors.
+// Mock time runs at the server's mock speed (the dashboard slider; 0 = gap held still).
 const RANGE_PERIOD_MS = 100;
-const simulatedGap = () => 1.075 + 0.925 * Math.cos((2 * Math.PI * elapsed()) / 30);
+let mockSpeed = 1;
+let mockT = 0; // s of mock time
+let mockAt = Date.now();
+const mockTime = () => {
+  const now = Date.now();
+  mockT += ((now - mockAt) / 1000) * mockSpeed;
+  mockAt = now;
+  return mockT;
+};
+function setMockSpeed(speed) {
+  if (!Number.isFinite(speed) || speed === mockSpeed) return;
+  mockTime(); // bank the time played at the old speed
+  mockSpeed = speed;
+  console.log(`${elapsed().toFixed(1).padStart(5)}s mock speed ${speed === 0 ? 'PAUSED' : `${speed}×`}`);
+}
+const simulatedGap = () => 1.075 + 0.925 * Math.cos((2 * Math.PI * mockTime()) / 30);
 const simulatedRange = () => (Math.random() < 0.05 ? null : Math.round((simulatedGap() + (Math.random() - 0.5) * 0.02) * 1000) / 1000);
 
 const boards = [];
@@ -72,7 +89,7 @@ class Board {
       this.wsConnected = true;
       this.sent = '';
       this.log('ws connected');
-      this.send({ t: 'hello', role: 'device', id: this.id, fw: 'mock-esp32/2', ...(args.token && { token: args.token }) });
+      this.send({ t: 'hello', role: 'device', id: this.id, fw: 'mock-esp32/2', mock: true, ...(args.token && { token: args.token }) });
     });
     ws.on('message', (data) => {
       const msg = JSON.parse(data.toString());
@@ -80,6 +97,8 @@ class Board {
       if (msg.t === 'alert') {
         this.alert = { epoch: msg.epoch, seq: msg.seq, level: msg.level, range: msg.range, obtainedAt: now, source: 'server' };
         this.beacon(); // relay immediately
+      } else if (msg.t === 'mockSpeed') {
+        setMockSpeed(msg.speed);
       } else if (msg.t === 'test') {
         this.testUntil = now + msg.ms;
         this.log(`test pulse ${msg.ms} ms`);

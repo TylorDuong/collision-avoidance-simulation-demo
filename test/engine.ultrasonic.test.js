@@ -1,5 +1,5 @@
 // Ultrasonic boards (ESP32, /device WebSocket) feeding the range filter through the engine,
-// on a stepped clock with no phones connected.
+// on a stepped clock.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,7 +29,7 @@ const bothBoards = (engine, range) => {
   engine.handleRange('2', { range });
 };
 
-test('two boards produce an ultrasonic range estimate with no phones connected', () => {
+test('two boards produce an ultrasonic range estimate', () => {
   const { engine, run } = setup();
   let n = 0;
   run(2, () => {
@@ -40,7 +40,7 @@ test('two boards produce an ultrasonic range estimate with no phones connected',
   // In the demo UI `range` is in display units; the real gap (m) is in `live.range`.
   assert.ok(Math.abs(s.live.range - 1.2) < 0.05, `range ${s.live.range}`);
   assert.deepEqual(s.ultrasonic.boards.map((b) => [b.id, b.status]), [['1', 'ok'], ['2', 'ok']]);
-  // The other node is traffic in both TCAS perspectives even though no phone is connected.
+  // The other node is traffic in both TCAS perspectives.
   assert.equal(s.perspectives.A.traffic.length, 1);
   assert.equal(s.perspectives.B.traffic.length, 1);
 });
@@ -115,7 +115,7 @@ test('RA senses are complementary: one node climbs, the other descends', () => {
 
 test('sense selection: the higher node climbs; without altitude A climbs and B descends', () => {
   assert.deepEqual(selectRaSenses(null, 1), { A: 'up', B: 'down' });
-  assert.deepEqual(selectRaSenses(0.4, 1), { A: 'up', B: 'down' }); // inside GPS noise: tie-break
+  assert.deepEqual(selectRaSenses(0.4, 1), { A: 'up', B: 'down' }); // below the threshold: tie-break
   assert.deepEqual(selectRaSenses(3, 1), { A: 'down', B: 'up' }); // B is 3 m higher
   assert.deepEqual(selectRaSenses(-3, 1), { A: 'up', B: 'down' });
 });

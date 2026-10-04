@@ -1,5 +1,5 @@
 // Dashboard shell: one connection + store, primary telemetry in the top bar, tabbed views
-// (TCAS: two mirrored side-by-side displays, A POV and B POV; 3D: the phone scene) and a
+// (TCAS: two mirrored side-by-side displays, A POV and B POV; 3D: the airspace) and a
 // collapsible diagnostics drawer. Every display implements
 // { mount(el), update(state, dt, info), resize(), unmount() }.
 
@@ -50,6 +50,38 @@ document.querySelector('#ui-size [data-ui="smaller"]').addEventListener('click',
 document.querySelector('#ui-size [data-ui="larger"]').addEventListener('click', () => stepUi(1));
 document.querySelector('#ui-size [data-ui="reset"]').addEventListener('click', () => setUiSize(UI_DEFAULT));
 setUiSize(uiSize);
+
+// ---- mock data speed --------------------------------------------------------------------
+// Shown while a mock source (tools/mock-esp32.js, tools/mock-airspace.js) is connected. The
+// slider moves in fixed stops; the server holds the value and pushes it to the mocks, so it
+// follows the server unless it is being dragged.
+
+const MOCK_SPEEDS = [0, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+const mockSpeed = { el: $('mock-speed'), dragging: false };
+mockSpeed.input = mockSpeed.el.querySelector('input');
+mockSpeed.output = mockSpeed.el.querySelector('output');
+mockSpeed.input.max = String(MOCK_SPEEDS.length - 1);
+const speedText = (v) => (v === 0 ? 'PAUSED' : `${v}×`);
+const nearestStop = (v) => MOCK_SPEEDS.reduce((best, s, i) => (Math.abs(s - v) < Math.abs(MOCK_SPEEDS[best] - v) ? i : best), 0);
+
+mockSpeed.input.addEventListener('input', () => {
+  const speed = MOCK_SPEEDS[Number(mockSpeed.input.value)];
+  mockSpeed.output.textContent = speedText(speed);
+  mockSpeed.el.dataset.paused = String(speed === 0);
+  conn.send({ t: MSG.MOCK_SPEED, speed });
+});
+mockSpeed.input.addEventListener('pointerdown', () => (mockSpeed.dragging = true));
+window.addEventListener('pointerup', () => (mockSpeed.dragging = false));
+
+function updateMockSpeed(s) {
+  const mock = s?.mock;
+  mockSpeed.el.hidden = !mock?.sources;
+  if (!mock || mockSpeed.dragging || document.activeElement === mockSpeed.input) return;
+  const i = String(nearestStop(mock.speed));
+  if (mockSpeed.input.value !== i) mockSpeed.input.value = i;
+  mockSpeed.output.textContent = speedText(mock.speed);
+  mockSpeed.el.dataset.paused = String(mock.speed === 0);
+}
 
 // ---- diagnostics drawer -------------------------------------------------------------------
 
@@ -123,6 +155,7 @@ function frame(now) {
     hudAt = now;
     guard(() => primary.update(store.state, store.age));
     guard(() => diagnostics.update(store.state, store.age));
+    guard(() => updateMockSpeed(store.state));
   }
 }
 requestAnimationFrame(frame);

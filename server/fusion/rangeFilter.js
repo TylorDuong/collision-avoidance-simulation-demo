@@ -3,9 +3,8 @@
 // on measurements, and the display estimate is extrapolated from the last one.
 
 export class RangeFilter {
-  constructor({ qMoving, qStill, gateSigma, maxConsecutiveRejects, maxPredictHorizon }) {
-    this.qMoving = qMoving;
-    this.qStill = qStill;
+  constructor({ q, gateSigma, maxConsecutiveRejects, maxPredictHorizon }) {
+    this.q = q;
     this.gate2 = gateSigma * gateSigma;
     this.maxRejects = maxConsecutiveRejects;
     this.maxHorizon = maxPredictHorizon;
@@ -34,10 +33,9 @@ export class RangeFilter {
     return { x: [xr, xv], P: [p00, p01, p10, p11] };
   }
 
-  _advance(t, moving) {
+  _advance(t) {
     const dt = Math.max(0, t - this.t);
-    const q = moving ? this.qMoving : this.qStill;
-    const { x, P } = RangeFilter._predict(this.x, this.P, dt, q);
+    const { x, P } = RangeFilter._predict(this.x, this.P, dt, this.q);
     this.x = x;
     this.P = P;
     this.t = Math.max(this.t, t);
@@ -60,19 +58,16 @@ export class RangeFilter {
    * @param {number} z measured range (m)
    * @param {number} R measurement variance (m²)
    * @param {number} t measurement time (s)
-   * @param {object} [opts]
-   * @param {boolean} [opts.moving=true] either phone moving -> larger process noise
-   * @param {boolean} [opts.still=false] both phones confidently still -> pull ṙ to 0
    * @returns {{ accepted: boolean, nis?: number, reinitialized?: boolean }}
    */
-  update(z, R, t, { moving = true, still = false } = {}) {
+  update(z, R, t) {
     if (!this.initialized) {
       this.x = [z, 0];
       this.P = [R, 0, 0, 1];
       this.t = t;
       return { accepted: true, reinitialized: true };
     }
-    this._advance(t, moving);
+    this._advance(t);
     const y = z - this.x[0];
     const S = this.P[0] + R;
     const nis = (y * y) / S;
@@ -88,16 +83,15 @@ export class RangeFilter {
     }
     this.rejects = 0;
     this._update(0, z, R);
-    if (still) this._update(1, 0, 0.05 ** 2);
     if (this.x[0] < 0) this.x[0] = 0;
     return { accepted: true, nis };
   }
 
   /** Estimate at time `t` without mutating the filter. */
-  estimate(t, moving = true) {
+  estimate(t) {
     if (!this.initialized) return null;
     const dt = Math.min(Math.max(0, t - this.t), this.maxHorizon);
-    const { x, P } = RangeFilter._predict(this.x, this.P, dt, moving ? this.qMoving : this.qStill);
+    const { x, P } = RangeFilter._predict(this.x, this.P, dt, this.q);
     return { range: Math.max(0, x[0]), rate: x[1], sigma: Math.sqrt(Math.max(0, P[0])), age: t - this.t };
   }
 }

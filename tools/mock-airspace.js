@@ -4,9 +4,9 @@
 // (A climbs, B descends), are clear of conflict, return to their altitudes, and the
 // scenario loops. Surrounding traffic shows the other symbols but is never a threat.
 //
-//   npm run mock                        # real time
-//   npm run mock -- --rate 2            # twice as fast
-//   npm run mock -- --url wss://192.168.1.50:8443/ws
+//   npm run mock                        # at the dashboard's speed slider (real time by default)
+//   npm run mock -- --rate 2            # start twice as fast (also moves the slider)
+//   npm run mock -- --url ws://192.168.137.1:8080/ws
 
 import WebSocket from 'ws';
 import { parseArgs } from 'node:util';
@@ -15,11 +15,12 @@ import { Airspace, NM, FT } from './sim/airspace.js';
 
 const { values: args } = parseArgs({
   options: {
-    url: { type: 'string', default: `wss://localhost:${process.env.HTTPS_PORT || 8443}/ws` },
-    rate: { type: 'string', default: '1' },
+    url: { type: 'string', default: `ws://localhost:${process.env.HTTP_PORT || 8080}/ws` },
+    rate: { type: 'string' },
   },
 });
-const rate = Math.max(0.1, Number(args.rate) || 1);
+// Playback speed: 1 = real time, 0 = paused. The dashboard's speed slider changes it.
+let rate = args.rate === undefined ? 1 : Math.max(0, Number(args.rate) || 0);
 
 const sim = new Airspace();
 const STEP_HZ = 50;
@@ -27,10 +28,18 @@ const SEND_HZ = 20;
 let ws = null;
 
 function connect() {
-  ws = new WebSocket(args.url, { rejectUnauthorized: false });
+  ws = new WebSocket(args.url);
   ws.on('open', () => {
     console.log(`airspace sim connected to ${args.url}`);
-    ws.send(JSON.stringify({ t: MSG.HELLO, role: 'sim' }));
+    ws.send(JSON.stringify({ t: MSG.HELLO, role: 'sim', ...(args.rate !== undefined && { speed: rate }) }));
+  });
+  ws.on('message', (data) => {
+    let msg;
+    try { msg = JSON.parse(data.toString()); } catch { return; }
+    if (msg.t === MSG.MOCK_SPEED && Number.isFinite(msg.speed) && msg.speed !== rate) {
+      rate = msg.speed;
+      console.log(`speed ${rate === 0 ? 'PAUSED' : `${rate}×`}`);
+    }
   });
   ws.on('close', () => {
     console.log('airspace sim disconnected, retrying…');

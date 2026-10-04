@@ -1,26 +1,29 @@
-// Microcontroller actuators (e.g. ESP32s driving an LED or a relay/servo).
-// They connect as plain-WebSocket clients to ws://<laptop>:<httpPort>/device — no TLS,
-// which keeps the firmware simple; it's LAN-only, optionally guarded by a shared token.
+// ESP32 boards: each one measures the A–B gap with its ultrasonic sensor and drives an LED and
+// a mechanism output (relay / MOSFET) from the threat level. They connect as plain-WebSocket
+// clients to ws://<laptop>:<httpPort>/device — LAN-only, optionally guarded by a shared token.
 // Boards also relay alerts to each other over ESP-NOW (firmware/esp32-actuator), so a board
 // whose WebSocket drops keeps receiving alerts through its peer.
 //
-// device -> server  { t: 'hello', role: 'device', id, fw?, token? }
+// device -> server  { t: 'hello', role: 'device', id, fw?, token?, mock? }
+//                     mock: true for tools/mock-esp32.js, which then also gets mockSpeed
 //                   { t: 'applied', level, mechanism, source, peer }   on change + every few s
 //                     source: 'server' | 'peer' | 'none'  (where the board's current alert came from)
 //                     peer:   { id, alive, rssi, ws } | null   (what it hears from its ESP-NOW peer)
 //                   { t: 'range', range }   ultrasonic distance in metres to the other node;
-//                     null = no echo. Feeds the same range filter as the phones (engine.handleRange).
+//                     null = no echo. Feeds the range filter (engine.handleRange).
 // server -> device  { t: 'alert', level, range, seq, epoch }  on every threat change + 1 Hz refresh.
 //                     seq increases on every send; epoch identifies this server run, so boards
 //                     can tell a fresher relayed copy from a stale one.
 //                   { t: 'test', ms }                          run the RA output for `ms`
+//                   { t: 'mockSpeed', speed }                  mock boards only (server/mockSpeed.js)
 
 import { randomInt } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { MSG } from '../shared/protocol.js';
 
-export function attachDevices({ server, engine, path = '/device', token = null, heartbeatMs = 2000 }) {
-  const wss = new WebSocketServer({ server, path, perMessageDeflate: false });
+/** Returns the board registry; route `/device` upgrades to its `wss` (index.js). */
+export function attachDevices({ engine, token = null, heartbeatMs = 2000, mockSpeed = null }) {
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const devices = new Map(); // ws -> info
   const epoch = randomInt(1, 2 ** 31);
   let seq = 0;
@@ -36,6 +39,7 @@ export function attachDevices({ server, engine, path = '/device', token = null, 
 
   wss.on('connection', (ws, req) => {
     const info = { id: null, ip: req.socket.remoteAddress, fw: null, applied: null, mechanism: false, source: null, peer: null, alive: true };
+    const sendThis = (msg) => send(ws, msg);
     ws.on('pong', () => (info.alive = true));
     ws.on('message', (data) => {
       let msg;
@@ -47,6 +51,7 @@ export function attachDevices({ server, engine, path = '/device', token = null, 
         devices.set(ws, info);
         console.log(`device ${info.id} connected from ${info.ip}`);
         send(ws, alertMsg());
+        if (msg.mock) mockSpeed?.add(sendThis);
       } else if (msg.t === MSG.RANGE && devices.has(ws)) {
         engine.handleRange(info.id, msg);
       } else if (msg.t === MSG.APPLIED && devices.has(ws)) {
@@ -61,6 +66,7 @@ export function attachDevices({ server, engine, path = '/device', token = null, 
       }
     });
     ws.on('close', () => {
+      mockSpeed?.remove(sendThis);
       if (devices.delete(ws)) console.log(`device ${info.id} disconnected`);
     });
   });
@@ -85,6 +91,7 @@ export function attachDevices({ server, engine, path = '/device', token = null, 
   setInterval(broadcast, 1000);
 
   return {
+    wss,
     /**
      * Boards connected over WebSocket, plus boards only heard of through a peer's ESP-NOW
      * reports (connected: false), so a board that lost Wi-Fi still shows up.

@@ -68,6 +68,12 @@ body {
 #ui-size { display: flex; align-items: center; gap: 0.25rem; }
 #ui-size .btn { padding: 0.375rem 0.625rem; }
 #ui-size [data-ui='reset'] { min-width: 3.5rem; }
+/* Mock data speed slider in the top bar (only while a mock source is connected). */
+#mock-speed { display: flex; align-items: center; gap: 0.5rem; }
+#mock-speed .k { font: 600 0.6875rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+#mock-speed input { width: 8rem; accent-color: var(--accent); cursor: pointer; }
+#mock-speed output { font: 700 0.875rem/1 var(--mono); font-variant-numeric: tabular-nums; min-width: 6ch; }
+#mock-speed[data-paused='true'] output { color: var(--ta); }
 .pill[data-status='open'] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
 .pill[data-status='closed'] { color: var(--ra); }
 
@@ -137,8 +143,7 @@ body {
 .kv dd { margin: 0; text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
 .badge { font: 0.6875rem/1 var(--mono); padding: 0.1875rem 0.375rem; border-radius: 0.25rem; background: var(--line); color: var(--muted); }
-.badge[data-v='acoustic'], .badge[data-v='ultrasonic'] { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
-.badge[data-v='gps'] { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.badge[data-v='ultrasonic'] { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
 .badge[data-v='stale'], .badge[data-v='none'] { background: color-mix(in srgb, var(--ra) 18%, transparent); color: var(--ra); }
 
 .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ra); }
@@ -183,7 +188,6 @@ body {
 
 /* 3D view labels */
 .label3d { position: absolute; transform: translate(-50%, -100%); font: 700 0.75rem/1 var(--mono); color: var(--text); padding: 0.1875rem 0.375rem; border-radius: 0.25rem; background: rgb(0 0 0 / 0.55); pointer-events: none; white-space: nowrap; }
-.label3d-symbol { display: flex; align-items: center; gap: 2px; padding: 0 0.5rem 0 0; background: rgb(0 0 0 / 0.75); }
 
 /* TCAS view */
 .tcas-wrap { position: absolute; inset: 0; background: #000; }

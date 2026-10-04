@@ -1,6 +1,6 @@
 // HUD in two parts: primary telemetry pinned in the top bar (threat, range, closing speed,
-// TTC, RA advisory) and the technical diagnostics in the collapsible bottom drawer. In airspace mode
-// (TCAS demo simulator) the top bar shows the A–B pair in NM, knots and range tau.
+// tau, RA advisory) and the technical diagnostics in the collapsible bottom drawer. The top bar
+// shows the A–B pair in NM, knots and range tau; with live boards the real gap in inches too.
 
 const LEVEL_TEXT = { other: 'OTHER', proximate: 'PROXIMATE', TA: 'TA', RA: 'RA' };
 const REASON_TEXT = { range: 'inside distance threshold', ttc: 'time-to-collision threshold', tau: 'TCAS tau / DMOD (simulator)', 'no-data': 'no range data', vertical: 'outside vertical limit (sample altitude)' };
@@ -28,7 +28,7 @@ export function createPrimaryHud(root) {
     <div class="metric threat" data-level="other"><span class="k">Threat</span><span class="v" data-k="level">—</span></div>
     <div class="metric"><span class="k">Range</span><span class="v" data-k="range">—</span></div>
     <div class="metric"><span class="k">Closing</span><span class="v" data-k="closing">—</span></div>
-    <div class="metric"><span class="k" data-k="ttc-k">TTC</span><span class="v" data-k="ttc">—</span></div>
+    <div class="metric"><span class="k">Tau</span><span class="v" data-k="ttc">—</span></div>
     <div class="metric advisory" data-active="false"><span class="k">Advisory</span><span class="v" data-k="advisory">—</span></div>`;
   const { el, set } = bind(root);
   const threat = root.querySelector('.threat');
@@ -54,14 +54,12 @@ export function createPrimaryHud(root) {
       const stale = age > STALE_MS;
       threat.dataset.level = stale ? 'stale' : s.threat.level;
       set('level', stale ? 'NO DATA' : LEVEL_TEXT[s.threat.level]);
-      const air = s.mode === 'airspace';
       // `fmt(null / x)` would print 0, so scale only known values. With live ultrasonic data the
       // display is in NM at the configured scale; the real gap is written beside it in inches.
       const per = (v, unit) => (v === null || v === undefined ? null : v / unit);
       const inches = s.live && s.live.range !== null ? ` · ${fmt(s.live.range / 0.0254, 1, ' in')}` : '';
-      set('range', air ? `${fmt(per(s.range.range, NM), 2, ' NM')}${inches}` : fmt(s.range.range, 2, ' m'));
-      set('closing', air ? fmt(per(s.range.closingSpeed, KT), 0, ' kt') : fmt(s.range.closingSpeed, 2, ' m/s'));
-      set('ttc-k', air ? 'Tau' : 'TTC');
+      set('range', `${fmt(per(s.range.range, NM), 2, ' NM')}${inches}`);
+      set('closing', fmt(per(s.range.closingSpeed, KT), 0, ' kt'));
       set('ttc', s.range.ttc === null ? '—' : fmt(s.range.ttc, 1, ' s'));
       const ra = stale ? '' : raText(s);
       advisory.dataset.active = String(!!ra);
@@ -207,7 +205,8 @@ export function createDiagnostics(root, { onDeviceTest, onSettings }) {
 
       el.source.dataset.v = s.range.source;
       set('source', s.range.source);
-      set('sigma', s.range.sigma === null || s.range.sigma === undefined ? '—' : `±${fmt(s.range.sigma * 100, 1)} cm`);
+      const sigma = s.ultrasonic?.sigma;
+      set('sigma', sigma === null || sigma === undefined ? '—' : `±${fmt(sigma / 0.0254, 2)} in`);
       set('reason', stale ? 'server state is stale' : REASON_TEXT[s.threat.reason] ?? '—');
 
       renderUltrasonic(s.ultrasonic?.boards);

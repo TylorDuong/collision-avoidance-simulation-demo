@@ -73,7 +73,7 @@ test('the scenario loops back to its start', () => {
   assert.deepEqual(sim.snapshot().aircraft.map((a) => [a.id, Math.round(a.x)]), start.aircraft.map((a) => [a.id, Math.round(a.x)]));
 });
 
-test('engine relays a live airspace and falls back to the phones when it stops', () => {
+test('engine relays a live airspace and falls back to the boards when it stops', () => {
   let now = 0;
   const engine = new Engine(config, { now: () => now, persist: false });
   const alerts = [];
@@ -86,7 +86,7 @@ test('engine relays a live airspace and falls back to the phones when it stops',
   engine.tick();
 
   const s = engine.getState();
-  assert.equal(s.mode, 'airspace');
+  assert.equal(s.mode, 'sim');
   assert.equal(s.threat.level, 'TA');
   assert.equal(s.range.source, 'sim');
   assert.equal(s.perspectives.A.traffic.length, sim.aircraft.length - 1);
@@ -95,7 +95,7 @@ test('engine relays a live airspace and falls back to the phones when it stops',
 
   now += config.airspaceFreshSeconds + 0.1;
   engine.tick();
-  assert.equal(engine.getState().mode, 'phones');
+  assert.equal(engine.getState().mode, 'live');
   engine.setAirspace({ nonsense: true }); // ignored
-  assert.equal(engine.getState().mode, 'phones');
+  assert.equal(engine.getState().mode, 'live');
 });

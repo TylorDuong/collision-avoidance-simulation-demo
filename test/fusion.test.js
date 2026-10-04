@@ -2,17 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RangeFilter } from '../server/fusion/rangeFilter.js';
 import { CollisionEvaluator } from '../server/collision.js';
-import { OrientationTracker } from '../server/fusion/orientation.js';
-import { ClockSync } from '../server/fusion/clock.js';
-import { haversine } from '../server/fusion/gps.js';
-import { fromDeviceOrientation, rotate } from '../shared/quat.js';
 import { config } from '../server/config.js';
-import { mulberry32 } from '../tools/sim/world.js';
 
 const near = (a, b, eps, msg) => assert.ok(Math.abs(a - b) < eps, `${msg ?? ''} ${a} vs ${b}`);
 
-// Fixed zones for the evaluator tests (the original phone-prototype set), so they do not
-// depend on the demo defaults in server/config.js, which are tuned for the ultrasonic boards.
+// Small seeded PRNG so the noisy filter test is repeatable.
+function mulberry32(seed) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Fixed zones for the evaluator tests, so they do not depend on the demo defaults in
+// server/config.js, which are tuned for the ultrasonic boards.
 const ZONES = {
   proximate: { range: 1.5 },
   TA: { range: 0.75, ttc: 2.5 },
@@ -37,13 +42,13 @@ test('range filter tracks a closing target and estimates its rate', () => {
 
 test('range filter gates outliers, then re-acquires after persistent disagreement', () => {
   const f = new RangeFilter(config.filter);
-  for (let i = 0; i < 10; i++) f.update(1.0, 0.03 ** 2, i * 0.25, { moving: false });
-  assert.equal(f.update(3.0, 0.03 ** 2, 2.5, { moving: false }).accepted, false);
+  for (let i = 0; i < 10; i++) f.update(1.0, 0.03 ** 2, i * 0.25);
+  assert.equal(f.update(3.0, 0.03 ** 2, 2.5).accepted, false);
   near(f.estimate(2.5).range, 1.0, 0.02);
   let res;
-  for (let i = 0; i < config.filter.maxConsecutiveRejects; i++) res = f.update(3.0, 0.03 ** 2, 2.75 + i * 0.25, { moving: false });
+  for (let i = 0; i < config.filter.maxConsecutiveRejects; i++) res = f.update(3.0, 0.03 ** 2, 2.55 + i * 0.05);
   assert.equal(res.reinitialized, true);
-  near(f.estimate(4).range, 3.0, 0.05);
+  near(f.estimate(2.8).range, 3.0, 0.05);
 });
 
 test('range filter extrapolation is capped at the prediction horizon', () => {
@@ -86,38 +91,4 @@ test('collision: no-data reason clears once range returns at level other', () =>
   const r = ev.evaluate({ range: 2.0, closingSpeed: 0, valid: true }, 0.1);
   assert.equal(r.threat, 'other');
   assert.equal(r.reason, null);
-});
-
-test('device orientation Euler angles map to the expected rotations', () => {
-  // alpha 90°: device x-axis (right edge) points north (+Y in ENU).
-  const q1 = fromDeviceOrientation(90, 0, 0);
-  rotate(q1, [1, 0, 0]).forEach((v, i) => near(v, [0, 1, 0][i], 1e-9));
-  // beta 90°: phone stood upright, device y-axis (top) points up (+Z).
-  const q2 = fromDeviceOrientation(0, 90, 0);
-  rotate(q2, [0, 1, 0]).forEach((v, i) => near(v, [0, 0, 1][i], 1e-9));
-  // gamma 90°: rolled right, screen normal (+z) points... +x? R_y(90) maps z -> x.
-  const q3 = fromDeviceOrientation(0, 0, 90);
-  rotate(q3, [0, 0, 1]).forEach((v, i) => near(v, [1, 0, 0][i], 1e-9));
-});
-
-test('orientation tracker aligns to compass north and outputs Three.js frame', () => {
-  const o = new OrientationTracker({ smoothing: 1, headingSmoothing: 1 });
-  // Flat phone, arbitrary alpha 30°, compass says it's pointing due east (heading 90°).
-  o.update({ alpha: 30, beta: 0, gamma: 0, heading: 90, headingAcc: 10 });
-  near(o.heading, 90, 1e-6, 'heading');
-  // Device top (+y) should point east = +X in Three.js.
-  rotate(o.q, [0, 1, 0]).forEach((v, i) => near(v, [1, 0, 0][i], 1e-6));
-  // Screen normal points up = +Y in Three.js.
-  rotate(o.q, [0, 0, 1]).forEach((v, i) => near(v, [0, 1, 0][i], 1e-6));
-});
-
-test('clock sync picks the lowest-RTT exchange', () => {
-  const c = new ClockSync();
-  c.add(1000, 5000 + 1010, 1040); // rtt 40, offset 4990
-  c.add(2000, 5000 + 2002, 2004); // rtt 4,  offset 5000
-  near(c.toServer(9000), 4000, 1e-9);
-});
-
-test('haversine distance', () => {
-  near(haversine(0, 0, 0, 1), 111195, 1);
 });

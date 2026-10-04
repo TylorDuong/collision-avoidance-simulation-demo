@@ -13,6 +13,11 @@
     <header id="topbar">
       <div id="hud-primary" aria-label="Primary telemetry"></div>
       <nav id="tabs" role="tablist" aria-label="Views"></nav>
+      <label id="mock-speed" title="How fast the mock data plays (mock boards and airspace simulator)" hidden>
+        <span class="k">Mock speed</span>
+        <input type="range" min="0" max="9" step="1" value="5" aria-label="Mock data speed" />
+        <output>1×</output>
+      </label>
       <div id="ui-size" role="group" aria-label="Interface size">
         <button class="btn" data-ui="smaller" aria-label="Smaller interface" title="Smaller interface">−</button>
         <button class="btn" data-ui="reset" aria-label="Reset interface size" title="Reset interface size">90%</button>

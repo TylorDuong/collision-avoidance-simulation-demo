@@ -60,7 +60,7 @@ test('ultrasonic data is drawn in the demo UI: head-on on one axis at the zone s
   const { engine, hold } = setup();
   hold(0.5); // 19.7 in
   const s = engine.getState();
-  assert.equal(s.mode, 'airspace');
+  assert.equal(s.mode, 'live');
   assert.equal(s.range.source, 'ultrasonic');
   assert.ok(Math.abs(s.live.range - 0.5) < 0.02);
   const expected = liveScale(config.zones, config.live.displayZones).toDisplay(s.live.range);
@@ -225,7 +225,7 @@ test('with the boards silent the live picture has no frozen aircraft', () => {
   hold(0.5);
   run(config.filter.staleAfter + config.ultrasonic.signalTimeoutSeconds + 0.5);
   const s = engine.getState();
-  assert.equal(s.mode, 'airspace'); // the layout does not jump back
+  assert.equal(s.mode, 'live');
   assert.equal(s.range.range, null);
   assert.equal(s.live.range, null);
   assert.deepEqual(s.airspace.aircraft, []);

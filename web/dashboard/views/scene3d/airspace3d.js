@@ -1,4 +1,4 @@
-// 3D layer for the simulated airspace (state.mode === 'airspace'): every aircraft as a
+// 3D layer for the airspace (simulated, or the live boards drawn as aircraft): every aircraft as a
 // small airplane model at its position and altitude, with a trail and a drop line to the
 // ground grid. Horizontal scale: 1 world unit = 1 NM. Altitudes are exaggerated
 // (VERTICAL_EXAGGERATION) so the RA manoeuvres are visible. Aircraft are coloured by

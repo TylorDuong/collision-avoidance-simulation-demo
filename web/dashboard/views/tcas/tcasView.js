@@ -1,7 +1,7 @@
-// Combined TCAS traffic / navigation display for one aircraft's (or phone's) point of view,
-// in the style of a heading-up navigation display (ND) with TCAS traffic (TCAS II v7.1
-// intro booklet, Figs. 2–3): `ownId` is own ship. Reads state.perspectives[ownId]; units
-// follow state.mode (UNITS in symbols.js).
+// Combined TCAS traffic / navigation display for one node's point of view, in the style of
+// a heading-up navigation display (ND) with TCAS traffic (TCAS II v7.1 intro booklet,
+// Figs. 2–3): `ownId` is own ship. Reads state.perspectives[ownId]; units are NM, feet and
+// knots (UNITS.airspace in symbols.js).
 //   - Rim: heading-up compass rose that turns with own heading (labels in tens of degrees,
 //     "09" = 090°), fixed lubber triangle and heading readout at the top.
 //   - Face: own ship fixed at the centre pointing up, each aircraft at its range and
@@ -12,10 +12,11 @@
 //     at its range on a fixed straight-ahead axis with its distance written beside it, and
 //     TAs/RAs are also reported in writing ("RA 0.28 +02"). Under the traffic, own route in green
 //     (perspective.nav, never processed as traffic).
-//   - RA cue: green chevrons left of own ship pointing the way to fly (up = climb, down =
-//     descend) with the metres still to go to safe separation counting down (live demo),
-//     then LEVEL OFF. Live demo only: faint rings where each threat zone starts, at its
-//     real-world TCAS radius (state.live.zones).
+//   - Left edge (mirroring the tape on the right, off the rose): RA cue, green chevrons
+//     pointing the way to fly (up = climb, down = descend) with the metres still to go to
+//     safe separation counting down (live demo), then LEVEL OFF.
+//   - Live demo only: faint rings where each threat zone starts, at its real-world TCAS
+//     radius (state.live.zones).
 //   - Right edge: vertical speed tape (0 .5 1 2 4 6 thousand fpm) with the own-ship pointer.
 //     During an RA, red bands mark the rates to avoid and a green band the rate to fly.
 //   - Overlay: GS / TAS / wind (top left), active waypoint course, distance and time to go
@@ -41,8 +42,8 @@ const RING_LABEL_BEARING = 315; // range ring labels along the upper-left ray (d
 const ZONE_LABEL_BEARING = { proximate: 135, TA: 135, RA: 225 }; // TA and RA rings are close: label them apart
 const ZONE_LABEL = { proximate: 'PROX', TA: 'TA', RA: 'RA' };
 const RA_CUE_STEP_MS = 250; // the chevrons light up one after another in the direction to fly
-// Range-only traffic (phones / ultrasonic boards: no bearing) is drawn at its range on this
-// fixed relative bearing, straight ahead. Its direction is not observable.
+// Traffic reported without a bearing is drawn at its range on this fixed relative bearing,
+// straight ahead.
 const NO_BEARING_AXIS = 0;
 
 const prefs = {
@@ -65,18 +66,14 @@ function vsiFraction(v) {
   return (Math.sign(v) * deg) / VSI_ANCHORS.at(-1)[1];
 }
 
-// Ultrasonic boards stand in for the phones while any of them is still reporting (the
-// server's Engine._nodePresent rule), even between accepted readings.
-const boardsReporting = (s) => (s.ultrasonic?.boards ?? []).some((b) => b.status !== 'no-signal');
 const signed = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
 const known = (v) => v !== null && v !== undefined;
 const DEG = Math.PI / 180;
 
 export function createTcasView({ ownId = 'A' } = {}) {
-  let wrap, canvas, ctx, controls, rangeGroup;
+  let wrap, canvas, ctx, controls;
   let dpr = 1;
-  let mode = null; // state.mode the range buttons were built for
-  let units = UNITS.phones;
+  const units = UNITS.airspace;
   let ui = 1; // 0.55–1: how far the display's fixed chrome is shrunk to fit the current window
   let rangeScale = units.defaultRange;
   let altFilter = ['NORM', 'ABV', 'BLW'].includes(prefs.get(`tcas-alt-${ownId}`)) ? prefs.get(`tcas-alt-${ownId}`) : 'NORM';
@@ -136,7 +133,17 @@ export function createTcasView({ ownId = 'A' } = {}) {
   function buildControls() {
     controls = document.createElement('div');
     controls.className = 'tcas-controls';
-    rangeGroup = buttonGroup('RNG');
+    const rangeGroup = buttonGroup(`RNG ${units.rangeUnit}`);
+    const key = `tcas-range-airspace-${ownId}`;
+    const saved = Number(prefs.get(key));
+    rangeScale = units.ranges.includes(saved) ? saved : units.defaultRange;
+    for (const r of units.ranges) {
+      button(rangeGroup, String(r), { range: String(r) }, () => {
+        rangeScale = r;
+        prefs.set(key, String(r));
+        syncControls();
+      });
+    }
     const altGroup = buttonGroup('ALT');
     for (const [id, label] of ALT_FILTERS) {
       button(altGroup, label, { alt: id }, () => {
@@ -145,26 +152,6 @@ export function createTcasView({ ownId = 'A' } = {}) {
         syncControls();
       });
     }
-  }
-
-  // Range choices depend on the units, so rebuild them when the state's mode changes.
-  function useMode(next) {
-    if (next === mode) return;
-    mode = next;
-    units = UNITS[mode] ?? UNITS.phones;
-    const key = `tcas-range-${mode}-${ownId}`;
-    const saved = Number(prefs.get(key));
-    rangeScale = units.ranges.includes(saved) ? saved : units.defaultRange;
-    rangeGroup.querySelectorAll('button').forEach((b) => b.remove());
-    for (const r of units.ranges) {
-      button(rangeGroup, String(r), { range: String(r) }, () => {
-        rangeScale = r;
-        prefs.set(key, String(r));
-        syncControls();
-      });
-    }
-    rangeGroup.firstChild.textContent = `RNG ${units.rangeUnit}`;
-    controls.querySelector('[data-alt]').parentElement.hidden = mode !== 'airspace'; // phones have no altitude bands
     syncControls();
   }
 
@@ -216,7 +203,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     ctx.closePath();
     ctx.fill();
 
-    // Heading readout above it: "HDG [090] TRU" (simulator, true) or "MAG" (phone compass).
+    // Heading readout above it: "HDG [090] TRU" (true heading).
     const size = Math.max(12, Math.min(18, Math.round(R * 0.085)));
     const by = tipY - tw * 1.5 - size * 0.95;
     boxedText(known(heading) ? formatHeading(heading) : '---', cx, by, { color: NAV_COLORS.compass, size });
@@ -345,22 +332,38 @@ export function createTcasView({ ownId = 'A' } = {}) {
 
   // ---- RA cue --------------------------------------------------------------------------
 
-  // Three stacked green chevrons left of own ship pointing the way to fly, the sense below
-  // them and, when the own ship reports it (live demo), the metres still to climb / descend
-  // to safe separation. At safe separation: a level bar and LEVEL OFF.
-  function drawRaCue(banner, cx, cy, R, now) {
-    if (banner?.level !== 'RA') return;
+  // In the margin left of the rose (the vertical speed tape's mirror image), never on its
+  // face: three stacked green chevrons pointing the way to fly, the sense under them and,
+  // when the own ship reports it (live demo), the metres still to climb / descend to safe
+  // separation. At safe separation: a level bar and LEVEL OFF. Sized to fit the margin.
+  function drawRaCue(banner, left, right, cy, R, now) {
+    const room = right - left;
+    if (banner?.level !== 'RA' || room < 24) return;
     const color = TCAS_COLORS.vsiGreen;
-    const x = cx - R * 0.42;
-    const w = R * 0.09; // chevron half-width
-    const h = w * 0.6; // chevron height
-    const gap = R * 0.075;
-    const y0 = cy - R * 0.2; // middle chevron
+    const x = (left + right) / 2;
     const levelOff = banner.text.startsWith('LEVEL OFF');
     const up = banner.sense === 'up';
+    const count = !levelOff && known(banner.remaining);
+    // Each line as large as the margin allows, up to `max`.
+    const fit = (str, max) => {
+      ctx.font = `700 ${max}px ${FONT}`;
+      return Math.max(8, Math.min(max, Math.floor((max * (room - 4)) / ctx.measureText(str).width)));
+    };
+    const label = levelOff ? 'LEVEL OFF' : up ? 'CLIMB' : 'DESCEND';
+    const countText = count ? `${Math.ceil(banner.remaining)} m` : '';
+    const size = fit(label, Math.max(11, Math.min(22, Math.round(R * 0.11))));
+    const numSize = count ? fit(countText, Math.round(size * 1.5)) : 0;
+    const capSize = count ? fit('TO SAFE SEP', Math.max(8, size - 4)) : 0;
+    const w = Math.min(R * 0.15, room * 0.4); // chevron half-width
+    const h = w * 0.6; // chevron height
+    const gap = w * 0.8;
+    // The whole block (chevrons, sense, count, caption) is centred on the rose.
+    const chevH = 2 * gap + h;
+    const blockH = chevH + size * 1.6 + (count ? numSize * 1.3 + capSize * 1.3 : 0);
+    const y0 = cy - blockH / 2 + chevH / 2; // middle chevron
     ctx.save();
     ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(3, R * 0.022);
+    ctx.lineWidth = Math.max(3, w * 0.22);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     if (levelOff) {
@@ -372,9 +375,9 @@ export function createTcasView({ ownId = 'A' } = {}) {
       }
     } else {
       const lit = Math.floor(now / RA_CUE_STEP_MS) % 3; // 0 = the chevron furthest back
+      const d = up ? 1 : -1;
       for (let i = 0; i < 3; i++) {
         const y = y0 + (up ? 1 - i : i - 1) * gap; // i = 0 is the rear chevron
-        const d = up ? 1 : -1;
         ctx.globalAlpha = i === lit ? 1 : 0.45;
         ctx.beginPath();
         ctx.moveTo(x - w, y + (d * h) / 2);
@@ -384,15 +387,13 @@ export function createTcasView({ ownId = 'A' } = {}) {
       }
     }
     ctx.globalAlpha = 1;
-    const size = Math.max(11, Math.round(R * 0.07));
-    const label = levelOff ? 'LEVEL OFF' : up ? 'CLIMB' : 'DESCEND';
-    let y = y0 + gap * 1.5 + size * 0.9;
+    let y = y0 + chevH / 2 + size;
     text(label, x, y, { color, size, align: 'center', baseline: 'middle' });
-    const remaining = banner.remaining;
-    if (!levelOff && known(remaining)) {
-      y += size * 1.35;
-      text(`${Math.ceil(remaining)} m`, x, y, { color, size: Math.round(size * 1.35), align: 'center', baseline: 'middle' });
-      text('TO SAFE SEP', x, y + size * 1.1, { color: TCAS_COLORS.dim, size: Math.max(9, size - 4), align: 'center', baseline: 'middle' });
+    if (count) {
+      y += size * 0.6 + numSize * 0.75;
+      text(countText, x, y, { color, size: numSize, align: 'center', baseline: 'middle' });
+      y += numSize * 0.65 + capSize * 0.8;
+      text('TO SAFE SEP', x, y, { color: TCAS_COLORS.dim, size: capSize, align: 'center', baseline: 'middle' });
     }
     ctx.restore();
   }
@@ -487,7 +488,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
 
   // Top right: active (TO) waypoint with the course to it, distance and time to go.
   function drawWaypointData(W, nav, fs) {
-    if (!nav) return; // no flight plan (e.g. the phones)
+    if (!nav) return; // no flight plan (e.g. the live boards)
     const x = W - 16;
     const to = nav.active;
     if (!to) {
@@ -510,7 +511,6 @@ export function createTcasView({ ownId = 'A' } = {}) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
-    useMode(s?.mode ?? 'phones');
 
     // The margins around the rose (data block above, status row and buttons below, vertical speed
     // tape beside) are designed for a ~720 × 520 window. In a smaller window (or when the
@@ -538,7 +538,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     const nav = stale ? null : pic?.nav ?? null; // flight plan: drawn, never treated as traffic
 
     drawBezel(cx, cy, R);
-    drawCompass(cx, cy, R, heading, mode === 'airspace' ? 'TRU' : 'MAG');
+    drawCompass(cx, cy, R, heading, 'TRU');
     drawRangeRings(cx, cy, Rt, fs);
     if (!stale) drawZoneRings(cx, cy, Rt, s.live?.zones, fs);
     drawRoute(cx, cy, R, Rt, sym, nav);
@@ -562,8 +562,8 @@ export function createTcasView({ ownId = 'A' } = {}) {
     noBearing.forEach((t, i) => {
       boxedText(formatNoBearing(t, units), cx, cy + Rt * 0.55 + i * nbSize * 1.9, { color: TCAS_COLORS[t.threat], size: nbSize, border: null });
     });
-    drawRaCue(banner, cx, cy, R, now);
 
+    drawRaCue(banner, 6, cx - R * 1.04 - 6, cy, R, now); // left margin, clear of the rose
     drawVsiTape(W - 16 * ui - side / 2 + 8 * ui, cy, Math.max(10, Math.min(R * 0.62, (H - top - bottom) / 2 - fs * 2)), banner?.vsi, own, fs);
     drawFlightData(own, fs);
     drawWaypointData(W, nav, fs);
@@ -576,10 +576,9 @@ export function createTcasView({ ownId = 'A' } = {}) {
     text(tcasMode === 'STBY' ? 'TCAS STBY' : tcasMode, 16 + ctx.measureText(`${ownId} POV`).width + fs, H - 70 * ui, { color: tcasMode === 'TA/RA' ? TCAS_COLORS.data : TCAS_COLORS.TA, size: fs });
     const sy = H - 44 * ui;
     if (stale) text('NO DATA', 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
-    else if (s.mode !== 'airspace' && !s.phones[ownId].connected && !boardsReporting(s)) text(`OWN SHIP (${ownId}) OFFLINE`, 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
     else if (offscale) text('TRAFFIC', 16, sy, { color: TCAS_COLORS[offscale], size: fs + 1 }); // TA/RA beyond the selected range
     else if (!traffic.length) text('NO TRAFFIC', 16, sy, { color: TCAS_COLORS.dim, size: fs });
-    if (s?.mode === 'airspace') text(`REL  ${altFilter}`, 16, H - 18 * ui, { color: TCAS_COLORS.data, size: fs });
+    text(`REL  ${altFilter}`, 16, H - 18 * ui, { color: TCAS_COLORS.data, size: fs });
   }
 
   return {
@@ -592,7 +591,6 @@ export function createTcasView({ ownId = 'A' } = {}) {
       canvas.setAttribute('aria-label', `TCAS traffic and navigation display, ${ownId} point of view`);
       ctx = canvas.getContext('2d');
       buildControls();
-      useMode('phones');
       wrap.append(canvas, controls);
       el.append(wrap);
       this.resize();

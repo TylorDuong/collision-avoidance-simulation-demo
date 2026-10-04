@@ -4,9 +4,9 @@
 //   proximate  filled cyan diamond
 //   TA         filled amber circle
 //   RA         filled red square
-// Data tag: relative altitude as a signed two-digit number of tag units (hundreds of feet
-// for aircraft, 0.1 m for phones), above the symbol when traffic is above and below when
-// it is below, omitted when altitude is unknown. A vertical-trend arrow sits immediately
+// Data tag: relative altitude as a signed two-digit number of tag units (hundreds of feet),
+// above the symbol when traffic is above and below when it is below, omitted when altitude
+// is unknown. A vertical-trend arrow sits immediately
 // right of the symbol. Everything in the tag is drawn in the symbol's colour.
 // State values are SI (m, m/s); a unit profile (UNITS) converts them for display.
 
@@ -30,7 +30,7 @@ const NM = 1852;
 const FT = 0.3048;
 
 /**
- * Display unit profiles, picked by state.mode.
+ * Display unit profiles (one for now: the airspace in NM, feet and knots).
  *   range       metres per displayed range unit, `rangeUnit` its label
  *   relAlt      metres per data-tag unit
  *   trend       vertical rate (m/s) beyond which a trend arrow is shown
@@ -54,23 +54,6 @@ export const UNITS = {
     speedUnit: 'KT',
     vs: (ms) => Math.round(ms / (FT / 60) / 50) * 50,
     vsUnit: 'FPM',
-  },
-  phones: {
-    rangeUnit: 'm',
-    range: 1,
-    ranges: [1, 2, 5, 10],
-    defaultRange: 5,
-    rangeDigits: 2,
-    relAlt: 0.1,
-    trend: 0.1,
-    vsi: 0.1,
-    altFilter: { NORM: [-Infinity, Infinity], ABV: [-Infinity, Infinity], BLW: [-Infinity, Infinity] },
-    altitude: (m) => m.toFixed(1),
-    altitudeUnit: 'm',
-    speed: (ms) => ms.toFixed(1),
-    speedUnit: 'm/s',
-    vs: (ms) => Number(ms.toFixed(2)),
-    vsUnit: 'm/s',
   },
 };
 
@@ -166,7 +149,7 @@ export function drawHalfSymbol(ctx, x, y, size, threat, bearingRad) {
 }
 
 /** "+02" / "−01" / "00", or "" when altitude is unknown (nothing is shown). */
-export function formatRelAlt(relAlt, units = UNITS.phones) {
+export function formatRelAlt(relAlt, units = UNITS.airspace) {
   if (!known(relAlt)) return '';
   const n = Math.min(99, Math.abs(Math.round(relAlt / units.relAlt)));
   if (n === 0) return '00';
@@ -174,26 +157,26 @@ export function formatRelAlt(relAlt, units = UNITS.phones) {
 }
 
 /** "↑" / "↓" when the vertical rate is past the trend threshold, else "". */
-export function trendGlyph(rate, units = UNITS.phones) {
+export function trendGlyph(rate, units = UNITS.airspace) {
   if (!known(rate) || Math.abs(rate) < units.trend) return '';
   return rate > 0 ? '↑' : '↓';
 }
 
-/** Range in display units, e.g. "4.5" (NM) or "0.28" (m). */
-export function formatRange(range, units = UNITS.phones) {
+/** Range in display units, e.g. "4.5" (NM). */
+export function formatRange(range, units = UNITS.airspace) {
   const v = range / units.range;
   return v > 99.9 ? '>99' : v.toFixed(units.rangeDigits);
 }
 
 /** Written no-bearing advisory, e.g. "RA 4.5 +12↓". */
-export function formatNoBearing({ threat, range, relAlt, relAltRate }, units = UNITS.phones) {
+export function formatNoBearing({ threat, range, relAlt, relAltRate }, units = UNITS.airspace) {
   const parts = [threat, formatRange(range, units)];
   const alt = formatRelAlt(relAlt, units);
   if (alt) parts.push(alt + trendGlyph(relAltRate, units)); // the arrow needs a reported altitude
   return parts.join(' ');
 }
 
-export function drawDataTag(ctx, x, y, size, { relAlt, relAltRate }, color, units = UNITS.phones) {
+export function drawDataTag(ctx, x, y, size, { relAlt, relAltRate }, color, units = UNITS.airspace) {
   if (!known(relAlt)) return; // altitude not reported: no tag, no arrow
   const text = formatRelAlt(relAlt, units);
   const below = relAlt < 0 && text !== '00';

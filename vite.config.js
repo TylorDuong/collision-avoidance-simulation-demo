@@ -11,8 +11,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 800, // three.js
     rollupOptions: {
       input: {
-        index: resolve('web/index.html'),
-        phone: resolve('web/phone/index.html'),
         dashboard: resolve('web/dashboard/index.html'),
       },
     },

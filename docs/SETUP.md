@@ -1,6 +1,6 @@
-# Setup guide: server, ESP32s, phones
+# Setup guide: server, ESP32 boards, ultrasonic sensors
 
-This guide is for someone new to the ESP32 but comfortable with servers and terminals. It goes in the order that catches problems earliest: the software alone, then the network, then one ESP32, then the second, then the mechanism, then the phones.
+This guide is for someone new to the ESP32 but comfortable with servers and terminals. It goes in the order that catches problems earliest: the software alone, then the network, then one ESP32 with its sensor, then the second, then the mechanism.
 
 It assumes a classic **ESP32 DevKit (ESP32-WROOM-32)** board and that you run commands from the project folder.
 
@@ -8,9 +8,10 @@ It assumes a classic **ESP32 DevKit (ESP32-WROOM-32)** board and that you run co
 
 ## 0. What you need
 
-- The Windows laptop with Node.js 20 or newer.
+- The Windows laptop with Node.js 20 or newer. It runs the server and the TCAS dashboard, and hosts the hotspot.
 - **2 × ESP32 DevKit boards**, plus **USB cables that carry data**. Many cheap cables are charge-only and the board won't show up.
-- 2 iPhones.
+- **2 × ultrasonic sensors** (HC-SR04 or JSN-SR04T). If they run on 5 V, you also need 2 voltage dividers for `ECHO`, for example a 1 kΩ and a 2 kΩ resistor each.
+- 2 LEDs with 220 Ω resistors.
 - Later, for the mechanism: a relay module or a logic-level MOSFET, and a separate power supply for whatever it switches.
 
 ---
@@ -25,33 +26,34 @@ npm run build
 npm start
 ```
 
-**Check:** the terminal prints `Dashboard: https://localhost:8443/dashboard` and an `ESP32: ws://…:8080/device` line.
+**Check:** the terminal prints `Dashboard:  http://localhost:8080/dashboard` and one `ESP32:  ws://…:8080/device` line per network address.
 
-- In a **second terminal**: `npm run mock:phones` (two fake phones). `npm run mock` is the TCAS airspace demo instead.
-- In a **third terminal**: `npm run mock:esp32` (two fake ESP32s).
+In a **second terminal**, run `npm run mock:esp32 -- --range`. That starts two simulated boards that send ultrasonic ranges.
 
-Open https://localhost:8443/dashboard. The browser warns about the certificate; click Advanced → Continue. That's expected until Phase 2.
+Open http://localhost:8080/dashboard.
 
 **Check:**
-- The distance cycles between 2 m and 0.15 m.
-- The threat level goes CLEAR → PROXIMATE → CAUTION → DANGER and back.
+- The **Ultrasonic ranging** card shows both boards' distances in inches, closing and opening every 30 s.
+- The threat level goes OTHER → PROXIMATE → TA → RA and back, and the two TCAS displays show the other board as traffic.
 - The **Actuators** card lists `esp32-A` and `esp32-B` with "alert via server" and the peer "alive".
-- The mock ESP32 terminal prints LED and mechanism changes.
+- The mock terminal prints LED and mechanism changes.
 
-Optional: restart the board mock with `npm run mock:esp32 -- --drop-ws esp32-B@5-15`. Between 5 s and 15 s, B should switch to "alert via peer". That's the ESP-NOW relay working.
+Optional: restart the mock with `npm run mock:esp32 -- --range --drop-ws esp32-B@5-15`. Between 5 s and 15 s, B should switch to "alert via peer". That's the ESP-NOW relay working.
 
-Stop all three terminals with Ctrl+C. Don't run `mock:esp32` once the real boards are connected, because the IDs would clash.
+Optional: `npm run mock` plays the full TCAS demo scenario instead of the boards.
+
+Stop both terminals with Ctrl+C. Don't run `mock:esp32` once the real boards are connected, because the IDs would clash.
 
 ---
 
-## Phase 2: Network (hotspot, firewall, certificates)
+## Phase 2: Network (hotspot and firewall)
 
 ### 2.1 Turn on the laptop hotspot
 
 1. Go to Settings → Network & internet → **Mobile hotspot**.
 2. Click **Edit** and set a name, a password, and **Band: 2.4 GHz**. The ESP32 can't see 5 GHz networks.
 3. Turn the hotspot **On**. Windows usually needs the laptop itself connected to the internet (school Wi-Fi or Ethernet) to allow this.
-4. Run `ipconfig` and find the adapter named like `Local Area Connection* 2`. The `*` and the number vary by machine, and newer Windows versions may call it `Microsoft Wi-Fi Direct Virtual Adapter`. Its IPv4 address is usually **192.168.137.1**. Write it down; it's the laptop's address on your hotspot, and it goes in `SERVER_HOST` and in the phone URLs.
+4. Run `ipconfig` and find the adapter named like `Local Area Connection* 2`. The `*` and the number vary by machine, and newer Windows versions may call it `Microsoft Wi-Fi Direct Virtual Adapter`. Its IPv4 address is usually **192.168.137.1**. Write it down; it's the laptop's address on your hotspot, and it goes in `SERVER_HOST`.
 
    ```
    Wireless LAN adapter Local Area Connection* 2:      <- the hotspot
@@ -66,30 +68,14 @@ Stop all three terminals with Ctrl+C. Don't run `mock:esp32` once the real board
 ### 2.2 Open the firewall (admin PowerShell, one time)
 
 ```powershell
-netsh advfirewall firewall add rule name="Proximity demo" dir=in action=allow protocol=TCP localport=8443,8080
+netsh advfirewall firewall add rule name="Proximity demo" dir=in action=allow protocol=TCP localport=8080
 ```
 
-### 2.3 Make a trusted certificate (needed for the phones)
-
-```powershell
-winget install FiloSottile.mkcert
-```
-
-**Close and reopen your terminal** so `mkcert` is on PATH, then make sure the hotspot is on and run:
-
-```powershell
-npm run certs
-```
-
-Click **Yes** if Windows asks to install a certificate authority.
-
-**Check:** the output lists `192.168.137.1` among the certificate addresses. If it doesn't, the hotspot wasn't on; turn it on and run the command again.
-
-Run `npm start` again. The dashboard should now open without a certificate warning.
+The dashboard runs on the laptop itself, so only the boards need this rule.
 
 ---
 
-## Phase 3: First ESP32
+## Phase 3: First ESP32 and its sensor
 
 ### 3.1 Install the Arduino IDE
 
@@ -122,7 +108,21 @@ Do this before the real firmware, so you know uploading works.
 
 **Check:** the small LED on the board blinks once per second. Some boards have no LED wired to that pin, so it's fine if it doesn't blink as long as the upload said "Done uploading".
 
-### 3.4 Configure and flash the actuator firmware
+### 3.4 Wire the LED and the ultrasonic sensor
+
+**Unplug USB before wiring.**
+
+```
+GPIO13 ── 220 Ω → LED (+, long leg) → LED (−) → GND
+GPIO14 ── sensor TRIG
+GPIO12 ── sensor ECHO   (5 V sensor: ECHO → 1 kΩ → GPIO12, and GPIO12 → 2 kΩ → GND)
+5V/VIN ── sensor VCC    (3.3 V if your sensor is a 3.3 V model)
+GND    ── sensor GND
+```
+
+GPIO 12 is a boot-strapping pin. `ECHO` idles low, so this works, but never hold it high while the board resets. The pins are set at the top of the sketch (`TRIG_PIN`, `ECHO_PIN`, `LED_PIN`) if you need different ones.
+
+### 3.5 Configure and flash the firmware
 
 1. Create your secrets file (git ignores it):
    ```powershell
@@ -134,7 +134,7 @@ Do this before the real firmware, so you know uploading works.
    #define WIFI_PASS   "YourHotspotPassword"
    #define SERVER_HOST "192.168.137.1"   // from step 2.1
    #define SERVER_PORT 8080
-   #define DEVICE_ID   "esp32-A"         // B for the second board
+   #define DEVICE_ID   "esp32-A"         // esp32-B for the second board
    #define GROUP_ID    "proxdemo"        // same on both boards
    #define DEVICE_TOKEN ""
    ```
@@ -150,34 +150,37 @@ Do this before the real firmware, so you know uploading works.
 [esp-now] ready on channel 6
 [ws] connected
 [alert] other  range=-1.00 m
+[range] 12.4 in
 ```
 
-(`range=-1.00` means "no distance yet", which is expected without phones.)
+`range=-1.00` on the alert line means the server has no distance yet. The `[range]` lines are the sensor's own readings, 4 times a second. Move your hand in front of the sensor and they should follow it. `[range] no echo` means nothing reflected back within range; if it never changes, check the `TRIG`/`ECHO` wiring and the voltage divider.
 
-**Check:** with `npm start` running, the dashboard's **Actuators** card shows **esp32-A** with "alert via server" and "ESP-NOW peer: none heard". Click **Test**. The LED goes solid for 1 s and the Serial Monitor prints `[test] pulse` and `[mech] ON`.
-
-### 3.5 Watch it react without phones
-
-Keep the server running and start `npm run mock:phones` (fake phones only, **not** `mock:esp32`).
-
-**Check:** the real board's LED follows the levels:
+**Check:** with `npm start` running, the dashboard shows:
+- **Actuators:** **esp32-A** with "alert via server" and "ESP-NOW peer: none heard". Click **Test**. The LED goes solid for 1 s and the Serial Monitor prints `[test] pulse` and `[mech] ON`.
+- **Ultrasonic ranging:** esp32-A's reading in inches.
+- The TCAS displays draw the other aircraft at the measured distance. Bring your hand closer than 18, 10 and 6 in and the LED follows the levels:
 
 | Level | LED |
 |---|---|
-| clear | off |
+| other | off |
 | proximate | slow blink |
-| caution (TA) | fast blink |
-| danger (RA) | solid |
+| TA | fast blink |
+| RA | solid |
 
 ---
 
 ## Phase 4: Second ESP32 and the ESP-NOW link
 
-1. In `secrets.h`, change only `#define DEVICE_ID "esp32-B"`.
-2. Plug in the second board, pick **its** COM port in Tools → Port, and upload.
-3. Change `DEVICE_ID` back to `esp32-A`, so you don't later reflash board A with B's ID by accident.
+1. Wire the second board the same way (step 3.4).
+2. In `secrets.h`, change only `#define DEVICE_ID "esp32-B"`.
+3. Plug in the second board, pick **its** COM port in Tools → Port, and upload.
+4. Change `DEVICE_ID` back to `esp32-A`, so you don't later reflash board A with B's ID by accident.
+5. Point the two sensors at each other along one axis.
 
-**Check:** each board's Serial Monitor prints `[peer] esp32-A alive (rssi -40)` or the reverse. In the dashboard, each board shows the other as the ESP-NOW peer with "alive".
+**Check:**
+- Each board's Serial Monitor prints `[peer] esp32-A alive (rssi -40)` or the reverse. In the dashboard, each board shows the other as the ESP-NOW peer with "alive".
+- The **Ultrasonic ranging** card shows two similar readings, and the Range source reads `ultrasonic`.
+- Moving the boards together takes both displays through proximate, TA and RA, and both LEDs follow.
 
 ### Test the failure modes
 
@@ -193,7 +196,7 @@ The relay test needs board B's IP from its Serial Monitor. In an admin PowerShel
 New-NetFirewallRule -DisplayName "block esp32-B" -Direction Inbound -Protocol TCP -LocalPort 8080 -RemoteAddress 192.168.137.xx -Action Block
 ```
 
-Restart the server so B's existing connection drops. When finished, remove the rule:
+Restart the server so B's existing connection drops. While B is blocked, only A's readings reach the server. When finished, remove the rule:
 
 ```powershell
 Remove-NetFirewallRule -DisplayName "block esp32-B"
@@ -235,26 +238,12 @@ The safety timing lives at the top of the sketch:
 
 ---
 
-## Phase 6: Phones (legacy, not needed for the ultrasonic demo)
-
-The dashboard no longer has Phones, Acoustic ranging or Calibration cards, so this phase only works for the `/phone` pages and the server's phone code, not for the dashboard controls. The ultrasonic boards (Phase 5) are the range source now.
-
-1. Connect both iPhones to the laptop hotspot.
-2. Trust the certificate (one time per phone):
-   1. In Safari, open `http://192.168.137.1:8080/ca` and allow the download.
-   2. Go to **Settings → General → VPN & Device Management**, open the profile and tap **Install**.
-   3. Go to **Settings → General → About → Certificate Trust Settings** and turn the mkcert root **on**.
-3. Open `https://192.168.137.1:8443/phone`. Pick **A** on one phone and **B** on the other, tap **Start sensors**, and allow motion, microphone and location.
-4. Calibration needs the old dashboard button, which was removed. The server still accepts a `calibrate` message if you need it.
-
----
-
 ## Every session after setup (checklist)
 
 1. Turn on the laptop **Mobile hotspot**.
-2. Run `npm start`. Its printed addresses should include 192.168.137.1.
+2. Run `npm start`. Its printed `ESP32:` addresses should include 192.168.137.1.
 3. Power both ESP32s. Each should show "alert via server" and its peer "alive" on the dashboard.
-4. Open the dashboard. The "Ultrasonic ranging" card should show each board's distance in inches, and the Range source should read `ultrasonic`.
+4. Open http://localhost:8080/dashboard. The "Ultrasonic ranging" card should show each board's distance in inches, and the Range source should read `ultrasonic`.
 
 ---
 
@@ -266,10 +255,12 @@ The dashboard no longer has Phones, Acoustic ranging or Calibration cards, so th
 | Upload stuck on `Connecting…` | Hold **BOOT** during the upload |
 | `[wifi] connecting.....` forever | Hotspot not set to 2.4 GHz, wrong password, or hotspot off. SSID and password are case-sensitive. |
 | Wi-Fi works but no `[ws] connected` | Wrong `SERVER_HOST`, server not running, or the firewall rule missing for port 8080 |
+| `[range] no echo` all the time | `TRIG`/`ECHO` swapped or loose, missing voltage divider, sensor without power, or nothing within about 4 m in front of it |
+| Readings jump around | The sensors aren't facing each other, or a soft or angled surface is reflecting. Keep about a 15° cone clear in front of each sensor. |
+| Board won't boot with the sensor attached | `ECHO` is holding GPIO 12 high at reset. Check the divider, or move `ECHO` to another pin and change `ECHO_PIN`. |
 | Peers never see each other | Different `GROUP_ID`s, the same `DEVICE_ID` on both boards, or one board not on the hotspot |
 | Hotspot toggle greyed out | The laptop needs its own internet connection; otherwise use a cheap travel router |
-| `npm run certs` says "mkcert was not found on PATH" | Install it with `winget install FiloSottile.mkcert` (or `choco install mkcert`), then **close and reopen the terminal** and run it again |
-| Phone page says it needs HTTPS / certificate error | Redo the certificate trust steps. If the hotspot was off during `npm run certs`, run it again with the hotspot on. |
+| Dashboard says `web/dist missing` | Run `npm run build` |
 | Board resets when the mechanism fires | The load is pulling power from the ESP32. Give it its own supply, with a shared GND. |
 
-See the [README](../README.md) for how the system works (acoustic ranging, fusion, threat logic, ESP-NOW relay protocol).
+See the [README](../README.md) for how the system works (filtering, threat logic, the TCAS displays and the ESP-NOW relay protocol).
