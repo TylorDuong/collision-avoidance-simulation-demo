@@ -5,9 +5,14 @@
 // tests for TAs and RAs, coordinated complementary RA senses, and an automatic response
 // (climb or descend at 1500 fpm, then back to the cleared altitude after "clear of
 // conflict"). The scenario loops.
+// A and B also fly a mock flight plan (ROUTES) in a mock wind (WIND): they hold their
+// head-on track to their second waypoint, which lies past the encounter, then turn onto
+// the next leg. Navigation math lives in shared/navigation.js.
 //
 // Internal units are SI (metres, m/s, seconds); x = east, y = north, track clockwise
 // from north. The dashboard converts to NM / hundreds of feet / fpm for display.
+
+import { STANDARD_RATE, angleDiff, bearingTo, navPicture, sequenceRoute, trueAirspeed, wrap360 } from '../../shared/navigation.js';
 
 export const NM = 1852;
 export const FT = 0.3048;
@@ -54,7 +59,26 @@ export const SCENARIO = [
   { id: 'H', x: -9, y: 6, trk: 300, gs: 160, alt: null, vs: 0 }, // no altitude reporting
 ];
 
-function makeAircraft(s) {
+/**
+ * Mock flight plans for the TCAS aircraft, positions in NM in the SCENARIO frame. `active`
+ * is the TO waypoint at the start; the one before it is the FROM waypoint, behind the
+ * aircraft. Each first leg lies on the scenario's head-on track and its turn comes after
+ * the encounter, so the TCAS geometry is unchanged. Replace with real flight-plan data
+ * in the same shape (see shared/navigation.js).
+ */
+export const ROUTES = {
+  A: { active: 1, waypoints: [{ id: 'A1', x: -9, y: 0 }, { id: 'A2', x: 1.5, y: 0 }, { id: 'A3', x: 6, y: 2 }, { id: 'A4', x: 11, y: 2.5 }] },
+  B: { active: 1, waypoints: [{ id: 'B1', x: 9, y: 0.15 }, { id: 'B2', x: -1.5, y: 0.15 }, { id: 'B3', x: -6, y: -1.85 }, { id: 'B4', x: -11, y: -2.35 }] },
+};
+
+/** Mock wind, the same air mass for everyone: direction it blows from (deg), speed (kt). */
+export const WIND = { direction: 270, speed: 5 };
+
+function makeRoute(r) {
+  return r ? { active: r.active, waypoints: r.waypoints.map((w) => ({ id: w.id, x: w.x * NM, y: w.y * NM })) } : null;
+}
+
+function makeAircraft(s, routes) {
   return {
     id: s.id,
     tcas: !!s.tcas,
@@ -70,8 +94,11 @@ function makeAircraft(s) {
     clearedAlt: s.alt === null ? null : (s.levelOff ?? s.alt) * FT,
     ra: null, // { sense, intruder, since }
     returning: false,
+    route: makeRoute(routes[s.id]),
   };
 }
+
+const navState = (a) => ({ x: a.x, y: a.y, heading: a.trk, groundSpeed: a.gs });
 
 /** Geometry of intruder `i` seen from own ship `o`. */
 export function relative(o, i) {
@@ -118,8 +145,10 @@ export function classify(o, i, rel = relative(o, i), sl = SL5) {
 }
 
 export class Airspace {
-  constructor({ scenario = SCENARIO, loopSeconds = 150 } = {}) {
+  constructor({ scenario = SCENARIO, routes = ROUTES, wind = WIND, loopSeconds = 150 } = {}) {
     this.scenario = scenario;
+    this.routes = routes;
+    this.wind = wind ? { direction: wind.direction, speed: wind.speed * KT } : null;
     this.loopSeconds = loopSeconds;
     this.reset();
   }
@@ -127,7 +156,7 @@ export class Airspace {
   reset() {
     this.t = 0;
     this.loop = (this.loop ?? 0) + 1;
-    this.aircraft = this.scenario.map(makeAircraft);
+    this.aircraft = this.scenario.map((s) => makeAircraft(s, this.routes));
     this.byId = Object.fromEntries(this.aircraft.map((a) => [a.id, a]));
     this.pairs = new Map(); // `${own}>${intruder}` -> { level, heldUntil }
     this.minSeparation = null; // closest A–B approach of this loop
@@ -156,8 +185,18 @@ export class Airspace {
       a.vs += Math.sign(dv) * Math.min(Math.abs(dv), a.accel * dt);
       a.alt += a.vs * dt;
     }
+    if (a.route) this._lnav(a, dt);
     a.x += a.gs * Math.sin((a.trk * Math.PI) / 180) * dt;
     a.y += a.gs * Math.cos((a.trk * Math.PI) / 180) * dt;
+  }
+
+  // Lateral navigation: sequence the route, then turn towards the TO waypoint at standard rate.
+  _lnav(a, dt) {
+    sequenceRoute(a.route, navState(a));
+    const to = a.route.waypoints[a.route.active];
+    if (!to) return; // end of route: hold the track
+    const turn = angleDiff(bearingTo(a, to), a.trk);
+    a.trk = wrap360(a.trk + Math.sign(turn) * Math.min(Math.abs(turn), STANDARD_RATE * dt));
   }
 
   _cas(o) {
@@ -245,7 +284,13 @@ export class Airspace {
     return this.pairs.get(`${ownId}>${intruderId}`)?.level ?? 'other';
   }
 
-  /** TCAS traffic picture for one own ship (the dashboard's state.perspectives entry). */
+  /**
+   * TCAS traffic picture for one own ship (the dashboard's state.perspectives entry):
+   *   ownship  own-ship state; trueAirspeed and wind ({ direction from, speed }) in SI
+   *   traffic  other aircraft, range and bearing relative to own heading
+   *   nav      own flight plan (shared/navigation.js navPicture), null without a route.
+   *            Kept apart from `traffic`: waypoints are never TCAS targets.
+   */
   picture(ownId) {
     const o = this.byId[ownId];
     const traffic = [];
@@ -268,12 +313,15 @@ export class Airspace {
         id: o.id,
         heading: o.trk,
         groundSpeed: o.gs,
+        trueAirspeed: trueAirspeed(o.trk, o.gs, this.wind),
+        wind: this.wind,
         altitude: o.alt,
         verticalSpeed: o.vs,
         mode: 'TA/RA',
         ra: o.ra ? { sense: o.ra.sense, intruder: o.ra.intruder } : null,
       },
       traffic,
+      nav: navPicture(navState(o), o.route),
     };
   }
 

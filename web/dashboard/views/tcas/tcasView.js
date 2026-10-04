@@ -1,37 +1,46 @@
-// Combined TCAS traffic / RA display in the IVSI format (TCAS II v7.1 intro booklet, Fig. 3)
-// for one aircraft's (or phone's) point of view: `ownId` is own ship. Reads
-// state.perspectives[ownId]; units follow state.mode (UNITS in symbols.js).
-//   - Rim: vertical speed scale (0 at 9 o'clock, 0 .5 1 2 4 6 thousand fpm up and down)
-//     with the own-ship needle. During an RA, red arcs mark the rates to avoid and a green
-//     arc the rate to fly.
-//   - Face: heading-up traffic display, own ship at the centre, each aircraft at its range
-//     and relative bearing with its symbol and data tag. Range markings at half scale
-//     (ring of 12 dots) and full scale; selected range boxed in the upper right.
-//     Off-scale TAs/RAs are half symbols at the edge. Traffic without a bearing is only
-//     reported in writing, for TAs/RAs ("RA 4.5 +12").
-//   - Overlay: own-ship data (GS, heading, altitude, V/S), TCAS mode, altitude filter and
-//     status annunciations; the advisory banner stands in for the aural annunciation.
+// Combined TCAS traffic / navigation display for one aircraft's (or phone's) point of view,
+// in the style of a heading-up navigation display (ND) with TCAS traffic (TCAS II v7.1
+// intro booklet, Figs. 2–3): `ownId` is own ship. Reads state.perspectives[ownId]; units
+// follow state.mode (UNITS in symbols.js).
+//   - Rim: heading-up compass rose that turns with own heading (labels in tens of degrees,
+//     "09" = 090°), fixed lubber triangle and heading readout at the top.
+//   - Face: own ship fixed at the centre pointing up, each aircraft at its range and
+//     relative bearing with its symbol and data tag. Dashed range rings at round fractions
+//     of the selected range (labelled; full scale carries the unit); selected range boxed
+//     in the upper right. Rings, route and traffic share one range scale. Off-scale TAs/RAs
+//     are half symbols at the edge. Traffic without a bearing is only reported in writing,
+//     for TAs/RAs ("RA 4.5 +12"). Under the traffic, own flight-plan route in green
+//     (perspective.nav, never processed as traffic).
+//   - Right edge: vertical speed tape (0 .5 1 2 4 6 thousand fpm) with the own-ship pointer.
+//     During an RA, red bands mark the rates to avoid and a green band the rate to fly.
+//   - Overlay: GS / TAS / wind (top left), active waypoint course, distance and time to go
+//     (top right), altitude and V/S by the tape, POV / TCAS mode, altitude filter and status
+//     annunciations (bottom left); the advisory banner stands in for the aural annunciation.
 
-import { TCAS_COLORS, UNITS, drawOwnship, drawTraffic, drawHalfSymbol, drawDataTag, formatNoBearing } from './symbols.js';
+import { TCAS_COLORS, UNITS, drawOwnship, drawTraffic, drawHalfSymbol, drawDataTag, formatNoBearing, formatRange, rangeRings } from './symbols.js';
 import { AdvisoryTracker, VSI_MAX } from './advisories.js';
+import { NAV_COLORS, compassTicks, formatHeading, formatEta, windArrowAngle, drawWaypoint, drawWaypointLabel, drawArrow } from './navSymbols.js';
 
-// Non-linear IVSI scale: dial value -> degrees clockwise from 9 o'clock.
+// Non-linear vertical speed scale: dial value -> degrees of the former IVSI arc (170° = 6).
 const VSI_ANCHORS = [[0, 0], [0.5, 35], [1, 65], [2, 110], [4, 145], [6, 170]];
-const VSI_MAJOR = [0, 0.5, 1, 2, 4, 6];
-const VSI_MINOR = [0.25, 0.75, 1.5, 3, 5];
+const VSI_TICKS = [0, 0.5, 1, 2, 4, 6];
+const VSI_LABELS = [1, 2, 6];
 const ALT_FILTERS = [['ABV', 'ABV'], ['NORM', 'N'], ['BLW', 'BLW']];
 const ORDER = { other: 0, proximate: 1, TA: 2, RA: 3 };
 const FONT = "'B612 Mono', ui-monospace, monospace";
-const TOP = 80; // own-ship data + advisory banner
+const TOP = 112; // flight / waypoint data, advisory banner and heading readout
 const BOTTOM = 66; // status annunciations + range / altitude-filter buttons
+const SIDE = 48; // vertical speed tape (reserved on both sides to keep the rose centred)
+const ROUTE_CLIP = 0.78; // route drawn out to this fraction of R, inside the compass numerals
+const RING_LABEL_BEARING = 315; // range ring labels along the upper-left ray (deg from up)
 
 const prefs = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
 };
 
-/** Canvas angle (radians, as used by ctx.arc) of a dial value. */
-function vsiAngle(v) {
+/** Position of a dial value on the vertical speed tape: −1 (6 down) … 0 … +1 (6 up). */
+function vsiFraction(v) {
   const a = Math.min(Math.abs(v), VSI_MAX);
   let deg = VSI_ANCHORS.at(-1)[1];
   for (let i = 1; i < VSI_ANCHORS.length; i++) {
@@ -42,11 +51,12 @@ function vsiAngle(v) {
       break;
     }
   }
-  return Math.PI + (Math.sign(v) * deg * Math.PI) / 180;
+  return (Math.sign(v) * deg) / VSI_ANCHORS.at(-1)[1];
 }
 
-const fmtScale = (v) => (v === 0.5 ? '.5' : String(v));
 const signed = (n) => (n > 0 ? `+${n}` : n < 0 ? `−${-n}` : '0');
+const known = (v) => v !== null && v !== undefined;
+const DEG = Math.PI / 180;
 
 export function createTcasView({ ownId = 'A' } = {}) {
   let wrap, canvas, ctx, controls, rangeGroup;
@@ -154,79 +164,170 @@ export function createTcasView({ ownId = 'A' } = {}) {
     ctx.stroke();
   }
 
-  function drawRaArcs(cx, cy, R, vsi) {
-    if (!vsi) return;
-    const band = Math.max(5, R * 0.065);
+  // Heading-up compass rose: 5° ticks, 10° major ticks with tens-of-degree numerals (30° ones
+  // larger), turned so own heading is at the top under a fixed lubber triangle and readout.
+  function drawCompass(cx, cy, R, heading, reference) {
+    const rOut = R * 0.98;
+    const rLabel = R * 0.855;
+    const big = Math.max(10, Math.round(R * 0.085));
+    const small = Math.max(9, Math.round(R * 0.065));
     ctx.save();
-    ctx.lineWidth = band;
+    ctx.strokeStyle = NAV_COLORS.compass;
     ctx.lineCap = 'butt';
-    const arc = ([lo, hi], color) => {
-      ctx.strokeStyle = color;
+    for (const t of compassTicks(heading)) {
+      const a = t.angle * DEG;
+      const len = t.major ? R * 0.065 : R * 0.032;
+      ctx.lineWidth = t.major ? Math.max(1.5, R * 0.012) : Math.max(1, R * 0.007);
       ctx.beginPath();
-      ctx.arc(cx, cy, R - band / 2, vsiAngle(lo), vsiAngle(hi));
+      ctx.moveTo(cx + Math.sin(a) * (rOut - len), cy - Math.cos(a) * (rOut - len));
+      ctx.lineTo(cx + Math.sin(a) * rOut, cy - Math.cos(a) * rOut);
       ctx.stroke();
-    };
-    for (const r of vsi.red) arc(r, TCAS_COLORS.vsiRed);
-    arc(vsi.green, TCAS_COLORS.vsiGreen);
+      if (!t.label || !known(heading)) continue;
+      ctx.save();
+      ctx.translate(cx + Math.sin(a) * rLabel, cy - Math.cos(a) * rLabel);
+      ctx.rotate(a); // numerals read outward, like a real rose
+      text(t.label, 0, 0, { color: NAV_COLORS.compass, size: t.large ? big : small, align: 'center', baseline: 'middle' });
+      ctx.restore();
+    }
+
+    // Lubber triangle just outside the rim, pointing at own heading.
+    const tw = Math.max(6, R * 0.045);
+    const tipY = cy - R * 0.985;
+    ctx.fillStyle = NAV_COLORS.compass;
+    ctx.beginPath();
+    ctx.moveTo(cx, tipY);
+    ctx.lineTo(cx - tw, tipY - tw * 1.5);
+    ctx.lineTo(cx + tw, tipY - tw * 1.5);
+    ctx.closePath();
+    ctx.fill();
+
+    // Heading readout above it: "HDG [090] TRU" (simulator, true) or "MAG" (phone compass).
+    const size = Math.max(12, Math.min(18, Math.round(R * 0.085)));
+    const by = tipY - tw * 1.5 - size * 0.95;
+    boxedText(known(heading) ? formatHeading(heading) : '---', cx, by, { color: NAV_COLORS.compass, size });
+    const gap = size * 2.2;
+    text('HDG', cx - gap, by + 1, { color: TCAS_COLORS.data, size: size - 3, align: 'right', baseline: 'middle' });
+    text(reference, cx + gap, by + 1, { color: TCAS_COLORS.data, size: size - 3, align: 'left', baseline: 'middle' });
     ctx.restore();
   }
 
-  function drawVsiScale(cx, cy, R) {
-    const r1 = R * 0.9;
-    const fontPx = Math.max(10, Math.round(R * 0.085));
+  // Vertical speed tape (the IVSI's job on a glass cockpit's PFD): own-ship pointer, and RA
+  // guidance as red (avoid) and green (fly) bands. V/S above the tape, altitude below it.
+  function drawVsiTape(x, cy, half, vsi, own, fs) {
+    const w = 22;
+    const left = x - w / 2;
+    const y = (v) => cy - vsiFraction(v) * half;
     ctx.save();
+    ctx.fillStyle = '#0b0d10';
+    ctx.fillRect(left, cy - half, w, half * 2);
+    ctx.strokeStyle = '#3a3f45';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(left, cy - half, w, half * 2);
+
+    if (vsi) {
+      const band = w * 0.4;
+      const fill = ([lo, hi], color) => {
+        ctx.fillStyle = color;
+        ctx.fillRect(left, y(hi), band, y(lo) - y(hi));
+      };
+      for (const r of vsi.red) fill(r, TCAS_COLORS.vsiRed);
+      fill(vsi.green, TCAS_COLORS.vsiGreen);
+    }
+
     ctx.strokeStyle = TCAS_COLORS.scale;
-    ctx.lineCap = 'round';
-    const tick = (v, len, width) => {
-      const a = vsiAngle(v);
-      ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * (r1 - len), cy + Math.sin(a) * (r1 - len));
-      ctx.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
-      ctx.stroke();
-    };
-    for (const v of VSI_MINOR) for (const s of [1, -1]) tick(s * v, R * 0.045, Math.max(1, R * 0.008));
-    for (const v of VSI_MAJOR) {
+    const labelPx = Math.max(9, fs - 3);
+    for (const v of VSI_TICKS) {
       for (const s of v === 0 ? [1] : [1, -1]) {
-        tick(s * v, R * 0.08, Math.max(1.5, R * 0.014));
-        const a = vsiAngle(s * v);
-        const rl = R * 0.75;
-        text(fmtScale(v), cx + Math.cos(a) * rl, cy + Math.sin(a) * rl, { color: TCAS_COLORS.scale, size: fontPx, align: 'center', baseline: 'middle' });
+        const ty = y(s * v);
+        ctx.lineWidth = v === 0 ? 2 : 1.2;
+        ctx.beginPath();
+        ctx.moveTo(left + w - (v === 0 ? w * 0.6 : w * 0.35), ty);
+        ctx.lineTo(left + w, ty);
+        ctx.stroke();
+        if (VSI_LABELS.includes(v)) text(String(v), left - 3, ty, { color: TCAS_COLORS.scale, size: labelPx, align: 'right', baseline: 'middle' });
       }
     }
-    ctx.restore();
-  }
 
-  function drawNeedle(cx, cy, R, verticalSpeed) {
-    if (verticalSpeed === null || verticalSpeed === undefined) return; // no own-ship vertical speed source
-    const a = vsiAngle(verticalSpeed / units.vsi);
-    ctx.save();
-    ctx.strokeStyle = TCAS_COLORS.scale;
-    ctx.fillStyle = TCAS_COLORS.scale;
-    ctx.lineWidth = Math.max(2.5, R * 0.025);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(cx + Math.cos(a) * R * 0.81, cy + Math.sin(a) * R * 0.81);
-    ctx.lineTo(cx + Math.cos(a) * R * 0.98, cy + Math.sin(a) * R * 0.98);
-    ctx.stroke();
+    const vs = own?.verticalSpeed;
+    if (known(vs)) {
+      ctx.strokeStyle = TCAS_COLORS.ownship;
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(left - 2, y(vs / units.vsi));
+      ctx.lineTo(left + w + 4, y(vs / units.vsi));
+      ctx.stroke();
+    }
+    const right = x + w / 2;
+    text(known(vs) ? `${signed(units.vs(vs))} ${units.vsUnit}` : 'V/S ---', right, cy - half - 8, { color: TCAS_COLORS.data, size: fs - 2, align: 'right' });
+    const alt = own?.altitude;
+    text(known(alt) ? `${units.altitude(alt)} ${units.altitudeUnit}` : 'ALT ---', right, cy + half + fs + 4, { color: TCAS_COLORS.data, size: fs - 2, align: 'right' });
     ctx.restore();
   }
 
   // Half scale: ring of 12 dots. Full scale: thin ring. Both in the own-ship colour.
-  function drawRangeMarkings(cx, cy, Rt) {
+  // The one range scale shared by range rings, route and traffic: own ship at (cx, cy),
+  // the selected range at radius Rt. `range` in metres, `bearing` in degrees relative to
+  // own heading (clockwise from up).
+  function toScreen(cx, cy, Rt, range, bearing) {
+    const r = (range / (rangeScale * units.range)) * Rt;
+    const a = bearing * DEG;
+    return { x: cx + Math.sin(a) * r, y: cy - Math.cos(a) * r, r };
+  }
+
+  // Dashed range rings centred on own ship at round fractions of the selected range, each
+  // labelled where it crosses the upper-left ray; the outermost (full scale) carries the unit.
+  function drawRangeRings(cx, cy, Rt, fs) {
+    const rings = rangeRings(rangeScale);
+    const size = Math.max(9, fs - 3);
     ctx.save();
-    ctx.fillStyle = TCAS_COLORS.ring;
-    const dot = Math.max(1.5, Rt * 0.016);
-    for (let i = 0; i < 12; i++) {
-      const a = (i * Math.PI) / 6;
-      circle(cx + Math.sin(a) * (Rt / 2), cy - Math.cos(a) * (Rt / 2), dot);
-      ctx.fill();
-    }
     ctx.strokeStyle = TCAS_COLORS.ring;
-    ctx.globalAlpha = 0.45;
     ctx.lineWidth = 1;
-    circle(cx, cy, Rt);
-    ctx.stroke();
+    ctx.setLineDash([3, 5]);
+    for (const v of rings) {
+      ctx.globalAlpha = v === rangeScale ? 0.5 : 0.32;
+      circle(cx, cy, toScreen(cx, cy, Rt, v * units.range, 0).r);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 0.85;
+    ctx.font = `700 ${size}px ${FONT}`;
+    for (const v of rings) {
+      const label = v === rangeScale ? `${v} ${units.rangeUnit}` : String(v);
+      const p = toScreen(cx, cy, Rt, v * units.range, RING_LABEL_BEARING);
+      const w = ctx.measureText(label).width + 4;
+      ctx.fillStyle = '#000'; // break the ring under its label
+      ctx.fillRect(p.x - w / 2, p.y - size * 0.6, w, size * 1.2);
+      text(label, p.x, p.y + 1, { color: TCAS_COLORS.ring, size, align: 'center', baseline: 'middle' });
+    }
+    ctx.restore();
+  }
+
+  // ---- navigation route ----------------------------------------------------------------
+
+  // Own flight plan from the FROM waypoint on, on the same range scale as the traffic and
+  // clipped inside the compass numerals. The active (FROM -> TO) leg is drawn brighter.
+  function drawRoute(cx, cy, R, Rt, sym, nav) {
+    if (!nav?.waypoints?.length) return;
+    const pts = nav.waypoints.map((w) => ({ ...w, ...toScreen(cx, cy, Rt, w.range, w.bearing) }));
+    ctx.save();
+    circle(cx, cy, R * ROUTE_CLIP);
+    ctx.clip();
+    ctx.lineCap = 'round';
+    for (let i = 1; i < pts.length; i++) {
+      const activeLeg = pts[i].active;
+      ctx.strokeStyle = activeLeg ? NAV_COLORS.activeLeg : NAV_COLORS.route;
+      ctx.lineWidth = activeLeg ? Math.max(2, R * 0.016) : Math.max(1.5, R * 0.01);
+      ctx.beginPath();
+      ctx.moveTo(pts[i - 1].x, pts[i - 1].y);
+      ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.stroke();
+    }
+    for (const p of pts) {
+      if (Math.hypot(p.x - cx, p.y - cy) > R * ROUTE_CLIP - sym * 0.6) continue; // beyond the edge: line only
+      drawWaypoint(ctx, p.x, p.y, sym * 1.1, p.active);
+      drawWaypointLabel(ctx, p.x, p.y, sym, p.id, p.active);
+    }
     ctx.restore();
   }
 
@@ -241,16 +342,14 @@ export function createTcasView({ ownId = 'A' } = {}) {
 
   /** @returns {boolean} true when drawn as an off-scale half symbol */
   function drawPositionedTraffic(cx, cy, Rt, sym, t) {
-    const a = (t.bearing * Math.PI) / 180;
     const full = rangeScale * units.range;
     if (t.range > full) {
       if (t.threat !== 'TA' && t.threat !== 'RA') return false;
-      drawHalfSymbol(ctx, cx + Math.sin(a) * Rt, cy - Math.cos(a) * Rt, sym, t.threat, a);
+      const edge = toScreen(cx, cy, Rt, full, t.bearing);
+      drawHalfSymbol(ctx, edge.x, edge.y, sym, t.threat, t.bearing * DEG);
       return true;
     }
-    const r = (t.range / full) * Rt;
-    const x = cx + Math.sin(a) * r;
-    const y = cy - Math.cos(a) * r;
+    const { x, y } = toScreen(cx, cy, Rt, t.range, t.bearing);
     drawTraffic(ctx, x, y, sym, t.threat);
     drawDataTag(ctx, x, y, sym, t, TCAS_COLORS[t.threat], units);
     return false;
@@ -258,20 +357,47 @@ export function createTcasView({ ownId = 'A' } = {}) {
 
   // ---- overlay -----------------------------------------------------------------------
 
-  function drawOwnshipData(W, own, fs) {
-    const line = (i) => 22 + i * (fs + 7);
-    text(`${ownId} POV`, 16, line(0), { size: fs + 3 });
-    const gs = own?.groundSpeed;
-    text(gs === null || gs === undefined ? `GS ---` : `GS ${units.speed(gs)} ${units.speedUnit}`, 16, line(1), { color: TCAS_COLORS.data, size: fs });
-    const tcasMode = own?.mode ?? 'TA/RA';
-    text(tcasMode === 'STBY' ? 'TCAS STBY' : tcasMode, 16, line(2), { color: tcasMode === 'TA/RA' ? TCAS_COLORS.data : TCAS_COLORS.TA, size: fs });
+  /** Small label then a larger value, ND style ("GS 250"); returns the x after it. */
+  function labelled(label, value, x, y, fs) {
+    text(label, x, y, { color: TCAS_COLORS.text, size: fs - 3 });
+    ctx.font = `700 ${fs - 3}px ${FONT}`;
+    const vx = x + ctx.measureText(label).width + fs * 0.35;
+    text(value, vx, y, { color: TCAS_COLORS.text, size: fs + 2 });
+    ctx.font = `700 ${fs + 2}px ${FONT}`;
+    return vx + ctx.measureText(value).width;
+  }
 
-    const heading = own?.heading ?? null;
-    text(heading === null ? 'HDG ---' : `HDG ${String(Math.round(heading) % 360).padStart(3, '0')}°`, W - 16, line(0), { size: fs + 1, align: 'right' });
-    const alt = own?.altitude;
-    text(alt === null || alt === undefined ? 'ALT ---' : `ALT ${units.altitude(alt)} ${units.altitudeUnit}`, W - 16, line(1), { color: TCAS_COLORS.data, size: fs, align: 'right' });
-    const vs = own?.verticalSpeed;
-    text(vs === null || vs === undefined ? 'V/S ---' : `V/S ${signed(units.vs(vs))} ${units.vsUnit}`, W - 16, line(2), { color: TCAS_COLORS.data, size: fs, align: 'right' });
+  const line = (i, fs) => 24 + i * (fs + 9);
+
+  // Top left: ground speed, true airspeed, wind (from / speed) and a downwind arrow.
+  function drawFlightData(own, fs) {
+    const speed = (v) => (known(v) ? units.speed(v) : '---');
+    const end = labelled('GS', speed(own?.groundSpeed), 16, line(0, fs), fs);
+    labelled('TAS', speed(own?.trueAirspeed), end + fs, line(0, fs), fs);
+    const wind = own?.wind;
+    if (!wind) {
+      text('---/---', 16, line(1, fs), { color: TCAS_COLORS.text, size: fs });
+      return;
+    }
+    text(`${formatHeading(wind.direction)}°/${units.speed(wind.speed)}`, 16, line(1, fs), { color: TCAS_COLORS.text, size: fs });
+    drawArrow(ctx, 16 + fs * 0.7, line(2, fs) - fs * 0.35, fs * 1.4, windArrowAngle(wind, own.heading), TCAS_COLORS.text);
+  }
+
+  // Top right: active (TO) waypoint with the course to it, distance and time to go.
+  function drawWaypointData(W, nav, fs) {
+    if (!nav) return; // no flight plan (e.g. the phones)
+    const x = W - 16;
+    const to = nav.active;
+    if (!to) {
+      text('END OF ROUTE', x, line(0, fs), { color: NAV_COLORS.label, size: fs, align: 'right' });
+      return;
+    }
+    ctx.font = `700 ${fs}px ${FONT}`;
+    const courseText = `${formatHeading(to.course)}°`;
+    text(courseText, x, line(0, fs), { color: TCAS_COLORS.text, size: fs, align: 'right' });
+    text(to.id, x - ctx.measureText(courseText).width - fs * 0.6, line(0, fs), { color: NAV_COLORS.activeLabel, size: fs + 2, align: 'right' });
+    text(`${formatRange(to.distance, units)} ${units.rangeUnit}`, x, line(1, fs), { color: TCAS_COLORS.text, size: fs, align: 'right' });
+    text(formatEta(to.eta), x, line(2, fs), { color: TCAS_COLORS.text, size: fs, align: 'right' });
   }
 
   // ---- frame -------------------------------------------------------------------------
@@ -284,7 +410,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     ctx.fillRect(0, 0, W, H);
     useMode(s?.mode ?? 'phones');
 
-    const R = Math.max(60, Math.min(W - 32, H - TOP - BOTTOM) / 2 / 1.04);
+    const R = Math.max(60, Math.min(W - 32 - 2 * SIDE, H - TOP - BOTTOM) / 2 / 1.04);
     const cx = W / 2;
     const cy = TOP + Math.max(R * 1.04, (H - TOP - BOTTOM) / 2);
     const Rt = R * 0.64; // full-scale radius of the traffic display
@@ -298,11 +424,13 @@ export function createTcasView({ ownId = 'A' } = {}) {
     const traffic = stale || !pic || own?.mode === 'STBY' ? [] : pic.traffic;
     const { banner } = advisories.update(traffic, now, own);
 
+    const heading = own?.heading ?? null;
+    const nav = stale ? null : pic?.nav ?? null; // flight plan: drawn, never treated as traffic
+
     drawBezel(cx, cy, R);
-    drawRaArcs(cx, cy, R, banner?.vsi);
-    drawVsiScale(cx, cy, R);
-    drawRangeMarkings(cx, cy, Rt);
-    drawNeedle(cx, cy, R, own?.verticalSpeed);
+    drawCompass(cx, cy, R, heading, mode === 'airspace' ? 'TRU' : 'MAG');
+    drawRangeRings(cx, cy, Rt, fs);
+    drawRoute(cx, cy, R, Rt, sym, nav);
     drawOwnship(ctx, cx, cy, sym * 1.6);
     const boxAngle = (38 * Math.PI) / 180;
     boxedText(`${rangeScale}`, cx + Math.sin(boxAngle) * R * 0.71, cy - Math.cos(boxAngle) * R * 0.71, { color: TCAS_COLORS.ring, size: Math.max(11, Math.round(R * 0.07)) });
@@ -323,10 +451,16 @@ export function createTcasView({ ownId = 'A' } = {}) {
       boxedText(formatNoBearing(t, units), cx, cy + Rt * 0.55 + i * nbSize * 1.9, { color: TCAS_COLORS[t.threat], size: nbSize, border: null });
     });
 
-    drawOwnshipData(W, own, fs);
-    if (banner) boxedText(banner.text, cx, 60, { color: banner.color, size: Math.max(14, Math.min(20, Math.round(W / 34))) });
+    drawVsiTape(W - 16 - SIDE / 2 + 8, cy, Math.min(R * 0.62, (H - TOP - BOTTOM) / 2 - fs * 2), banner?.vsi, own, fs);
+    drawFlightData(own, fs);
+    drawWaypointData(W, nav, fs);
+    if (banner) boxedText(banner.text, cx, 56, { color: banner.color, size: Math.max(14, Math.min(20, Math.round(W / 34))) });
 
-    // Bottom-left: status, then altitude display mode and filter.
+    // Bottom-left: POV and TCAS mode, status, then altitude display mode and filter.
+    const tcasMode = own?.mode ?? 'TA/RA';
+    text(`${ownId} POV`, 16, H - 70, { size: fs + 1 });
+    ctx.font = `700 ${fs + 1}px ${FONT}`;
+    text(tcasMode === 'STBY' ? 'TCAS STBY' : tcasMode, 16 + ctx.measureText(`${ownId} POV`).width + fs, H - 70, { color: tcasMode === 'TA/RA' ? TCAS_COLORS.data : TCAS_COLORS.TA, size: fs });
     const sy = H - 44;
     if (stale) text('NO DATA', 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
     else if (s.mode !== 'airspace' && !s.phones[ownId].connected) text(`OWN SHIP (${ownId}) OFFLINE`, 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
@@ -342,7 +476,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
       canvas = document.createElement('canvas');
       canvas.className = 'view-fill';
       canvas.setAttribute('role', 'img');
-      canvas.setAttribute('aria-label', `TCAS traffic and resolution advisory display, ${ownId} point of view`);
+      canvas.setAttribute('aria-label', `TCAS traffic and navigation display, ${ownId} point of view`);
       ctx = canvas.getContext('2d');
       buildControls();
       useMode('phones');
