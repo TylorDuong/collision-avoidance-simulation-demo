@@ -32,6 +32,13 @@ export const config = {
     maxRange: 4.0,
     freshSeconds: 1, // an accepted reading this recent makes 'ultrasonic' the range source
     signalTimeoutSeconds: 2, // a board silent this long shows NO SIGNAL
+    noEchoSeconds: 0.5, // a board shows "no echo" only after this long without one (single misses are normal)
+    // Per-board clean-up before the range filter (server/fusion/boardPrefilter.js).
+    medianWindow: 3, // a reading further than spikeThreshold from the median of the board's
+    spikeThreshold: 2 * IN, // last 3 echoes is a spike and is replaced by that median
+    medianMaxAge: 0.5, // s, older echoes leave the median
+    offsetAlpha: 0.05, // per reading: how fast each board's offset against the other is learned
+    maxOffset: 0.03, // m, cap on that correction
   },
 
   // Live demo: the real ultrasonic gap between A and B is drawn on the TCAS demo display (NM,
@@ -60,8 +67,10 @@ export const config = {
   },
 
   filter: {
-    sigmaUltrasonic: 0.02, // m
-    q: 1.0, // (m/s²)² white-acceleration process noise (the boards are moved by hand)
+    // Two boards at 10 Hz each. Tuned so a gap held still reads steady (about ±0.15 in of
+    // jitter with ±0.4 in sensor noise) while a hand-moved board is still followed closely.
+    sigmaUltrasonic: 0.03, // m
+    q: 0.1, // (m/s²)² white-acceleration process noise (the boards are moved by hand)
     gateSigma: 3,
     maxConsecutiveRejects: 4,
     maxPredictHorizon: 1.0, // s, don't extrapolate further than this past the last measurement
@@ -77,9 +86,13 @@ export const config = {
     proximate: { range: 18 * IN },
     TA: { range: 10 * IN, ttc: 0.1 },
     RA: { range: 6 * IN, ttc: 0.1 },
+    // Hysteresis: a level is entered at once but left only once the range is past the zone by
+    // both releaseRangeFactor and releaseMargin, and not before minHoldSeconds, so sensor noise
+    // at a zone's edge does not blink the warning in and out.
     releaseRangeFactor: 1.15,
+    releaseMargin: 1.5 * IN, // m
     releaseTtcFactor: 1.3,
-    minHoldSeconds: 0.6,
+    minHoldSeconds: 1.0,
     minClosingSpeed: 0.05, // m/s, below this TTC is undefined
   },
 

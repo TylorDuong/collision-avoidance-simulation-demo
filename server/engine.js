@@ -5,6 +5,7 @@
 
 import { MSG, THREAT } from '../shared/protocol.js';
 import { RangeFilter } from './fusion/rangeFilter.js';
+import { BoardPrefilter } from './fusion/boardPrefilter.js';
 import { CollisionEvaluator, selectRaSenses } from './collision.js';
 import { INCH, applySettings, loadSettings, readSettings, saveSettings } from './settings.js';
 import { LiveVertical, liveScale } from './live.js';
@@ -27,10 +28,12 @@ export class Engine {
     this.settingsError = null; // why the last settings update was rejected, if it was
     if (persist) loadSettings(this.cfg, this.cfg.settings.file);
     this.filter = new RangeFilter(config.filter);
+    this.prefilter = new BoardPrefilter(config.ultrasonic);
     this.collision = new CollisionEvaluator(this.cfg.zones);
     // Ultrasonic boards (ESP32, /device WebSocket): latest reading per board id, and the last
     // one that went into the filter.
-    this.ultrasonic = { boards: new Map(), last: null }; // boards: id -> { t, range|null }; last: { t, id, range, accepted }
+    // boards: id -> { t, range, echoAt } (range: last cleaned echo); last: { t, id, range, accepted }
+    this.ultrasonic = { boards: new Map(), last: null };
     this.threat = { threat: 'other', level: 0, reason: 'no-data', ttc: null };
     this.raSenses = null; // { A, B } complementary senses, latched for the life of an RA
     this.listeners = { alert: [] };
@@ -47,23 +50,34 @@ export class Engine {
 
   /**
    * One ultrasonic reading from an ESP32 board. Both boards measure the same A–B gap, so each
-   * reading is an independent measurement for the one range filter. `range` is metres; null
-   * (or outside the sensor's limits) means no echo and is recorded but not filtered.
+   * reading is an independent measurement for the one range filter, after the per-board
+   * spike check and offset correction (fusion/boardPrefilter.js). `range` is metres; null (or
+   * outside the sensor's limits) means no echo and is recorded but not filtered.
    */
   handleRange(id, msg) {
     const t = this.now();
     const { minRange, maxRange } = this.cfg.ultrasonic;
     const r = Number.isFinite(msg.range) ? msg.range : null;
     const echo = r !== null && r >= minRange && r <= maxRange;
-    this.ultrasonic.boards.set(id, { t, range: echo ? r : null });
+    const board = this.ultrasonic.boards.get(id) ?? { t, range: null, echoAt: -Infinity };
+    this.ultrasonic.boards.set(id, board);
+    board.t = t;
     if (!echo) return;
-    const res = this.filter.update(r, this.cfg.filter.sigmaUltrasonic ** 2, t);
-    this.ultrasonic.last = { t, id, range: r, accepted: res.accepted };
+    const clean = this.prefilter.despike(id, r, t);
+    const z = clean - this.prefilter.correction(id, t);
+    const predicted = this.filter.estimate(t);
+    const res = this.filter.update(z, this.cfg.filter.sigmaUltrasonic ** 2, t);
+    if (res.accepted && !res.reinitialized && predicted) this.prefilter.learn(id, clean - predicted.range);
+    board.range = z;
+    board.echoAt = t;
+    this.ultrasonic.last = { t, id, range: z, accepted: res.accepted };
   }
 
+  // A single missed echo is normal for these sensors, so a board shows "no echo" only after
+  // none has come back for a while.
   _ultrasonicStatus(b, t) {
     if (t - b.t > this.cfg.ultrasonic.signalTimeoutSeconds) return 'no-signal';
-    return b.range === null ? 'no-echo' : 'ok';
+    return t - b.echoAt > this.cfg.ultrasonic.noEchoSeconds ? 'no-echo' : 'ok';
   }
 
   // The other node is traffic while any board is still reporting, even between accepted readings.
@@ -250,12 +264,10 @@ export class Engine {
       settings: this._settingsState(),
       range,
       ultrasonic: {
-        boards: [...this.ultrasonic.boards].map(([id, b]) => ({
-          id,
-          range: b.range,
-          status: this._ultrasonicStatus(b, t),
-          ageMs: Math.round((t - b.t) * 1000),
-        })),
+        boards: [...this.ultrasonic.boards].map(([id, b]) => {
+          const status = this._ultrasonicStatus(b, t);
+          return { id, range: status === 'ok' ? b.range : null, status, ageMs: Math.round((t - b.t) * 1000) };
+        }),
         last: this.ultrasonic.last
           ? { ageMs: Math.round((t - this.ultrasonic.last.t) * 1000), id: this.ultrasonic.last.id, range: this.ultrasonic.last.range, accepted: this.ultrasonic.last.accepted }
           : null,

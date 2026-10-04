@@ -40,7 +40,8 @@ const wsDrops = new Map(args['drop-ws'].map((s) => [s.split('@')[0], during(s.sp
 const peerDropped = args['drop-peer'] ? during(args['drop-peer']) : () => false;
 
 // --range: both boards report the same A–B gap, closing from 2 m to 0.15 m and back every 30 s
-// of mock time, each with its own noise and the occasional missed echo, like the real sensors.
+// of mock time, each with its own noise, a small fixed offset (no two sensors read alike), the
+// occasional missed echo and the occasional spike, like the real sensors.
 // Mock time runs at the server's mock speed (the dashboard slider; 0 = gap held still).
 const RANGE_PERIOD_MS = 100;
 let mockSpeed = 1;
@@ -59,13 +60,18 @@ function setMockSpeed(speed) {
   console.log(`${elapsed().toFixed(1).padStart(5)}s mock speed ${speed === 0 ? 'PAUSED' : `${speed}×`}`);
 }
 const simulatedGap = () => 1.075 + 0.925 * Math.cos((2 * Math.PI * mockTime()) / 30);
-const simulatedRange = () => (Math.random() < 0.05 ? null : Math.round((simulatedGap() + (Math.random() - 0.5) * 0.02) * 1000) / 1000);
+const simulatedRange = (offset) => {
+  if (Math.random() < 0.05) return null; // no echo
+  const r = Math.random() < 0.02 ? 0.1 + Math.random() * 2 : simulatedGap() + offset + (Math.random() - 0.5) * 0.02;
+  return Math.round(r * 1000) / 1000;
+};
 
 const boards = [];
 
 class Board {
-  constructor(id) {
+  constructor(id, offset = 0) {
     this.id = id;
+    this.offset = offset; // m, this sensor's fixed reading error (--range)
     this.ws = null;
     this.wsConnected = false;
     this.alert = null; // { epoch, seq, level, range, obtainedAt, source }
@@ -170,7 +176,7 @@ class Board {
 
     if (args.range && this.wsConnected && now - this.lastRangeAt >= RANGE_PERIOD_MS) {
       this.lastRangeAt = now;
-      this.send({ t: 'range', range: simulatedRange() });
+      this.send({ t: 'range', range: simulatedRange(this.offset) });
     }
 
     const status = JSON.stringify([level, source, peerAlive]);
@@ -188,7 +194,7 @@ class Board {
   }
 }
 
-for (const id of args.ids.split(',')) boards.push(new Board(id.trim()));
+args.ids.split(',').forEach((id, i) => boards.push(new Board(id.trim(), i % 2 ? -0.01 : 0.01)));
 for (const b of boards) b.connect();
 setInterval(() => boards.forEach((b) => b.beacon()), PEER_BEACON_MS);
 setInterval(() => boards.forEach((b) => b.tick()), 50);

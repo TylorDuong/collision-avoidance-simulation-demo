@@ -68,9 +68,72 @@ test('no-echo and out-of-range readings do not move the filter', () => {
   engine.handleRange('1', { range: null });
   engine.handleRange('2', { range: 9 }); // beyond the sensor's maxRange
   engine.handleRange('2', { range: Number.NaN });
-  const s = engine.getState();
-  assert.equal(s.range.range, before);
-  assert.deepEqual(s.ultrasonic.boards.map((b) => [b.id, b.status, b.range]), [['1', 'no-echo', null], ['2', 'no-echo', null]]);
+  assert.equal(engine.getState().range.range, before);
+  // A single missed echo is normal: the boards still show their last range.
+  assert.deepEqual(engine.getState().ultrasonic.boards.map((b) => b.status), ['ok', 'ok']);
+  // No echo for longer than noEchoSeconds: they show no echo.
+  n = 0;
+  run(config.ultrasonic.noEchoSeconds + 0.2, () => {
+    if (n++ % 5 === 0) bothBoards(engine, null);
+  });
+  assert.deepEqual(engine.getState().ultrasonic.boards.map((b) => [b.id, b.status, b.range]), [['1', 'no-echo', null], ['2', 'no-echo', null]]);
+});
+
+test('an offset between the two sensors is learned, so the range does not zig-zag', () => {
+  const { engine, run } = setup();
+  // Board 1 reads 2 cm long, board 2 2 cm short: the true gap is 0.5 m.
+  let n = 0;
+  run(10, () => {
+    if (n % 10 === 0) engine.handleRange('1', { range: 0.52 });
+    if (n % 10 === 5) engine.handleRange('2', { range: 0.48 });
+    n++;
+  });
+  const seen = [];
+  run(1, () => {
+    if (n % 10 === 0) engine.handleRange('1', { range: 0.52 });
+    if (n % 10 === 5) engine.handleRange('2', { range: 0.48 });
+    n++;
+    seen.push(engine.getState().live.range);
+  });
+  const swing = Math.max(...seen) - Math.min(...seen);
+  assert.ok(swing < 0.002, `swing ${swing} m`);
+  assert.ok(Math.abs(seen.at(-1) - 0.5) < 0.005, `range ${seen.at(-1)}`);
+  // Each board's row shows its corrected reading.
+  for (const b of engine.getState().ultrasonic.boards) assert.ok(Math.abs(b.range - 0.5) < 0.005, `${b.id} ${b.range}`);
+});
+
+test('one-off spikes from a board do not reach the range', () => {
+  const { engine, run } = setup();
+  let n = 0;
+  const seen = [];
+  run(5, (t) => {
+    if (n % 5 === 0) bothBoards(engine, n % 35 === 0 ? 0.1 : 0.6); // a 0.1 m spike now and then
+    n++;
+    if (t > 1) seen.push(engine.getState().live.range);
+  });
+  assert.ok(seen.every((r) => Math.abs(r - 0.6) < 0.01), `min ${Math.min(...seen)}`);
+  assert.equal(engine.threat.threat, 'other');
+});
+
+test('hovering at a zone edge with noisy sensors does not blink the threat level', () => {
+  const { engine, run } = setup();
+  const IN = 0.0254;
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const noise = () => (rand() + rand() + rand() - 1.5) * 0.02; // about ±1 cm
+  // Just outside the RA zone, each board with its own offset and noise.
+  const gap = config.zones.RA.range + 0.4 * IN;
+  let n = 0;
+  let changes = 0;
+  let prev = null;
+  run(30, () => {
+    if (n % 10 === 0) engine.handleRange('1', { range: gap + 0.01 + noise() });
+    if (n % 10 === 5) engine.handleRange('2', { range: gap - 0.01 + noise() });
+    n++;
+    if (engine.threat.threat !== prev) changes++;
+    prev = engine.threat.threat;
+  });
+  assert.ok(changes <= 4, `${changes} level changes in 30 s`);
 });
 
 test('a silent board shows no-signal and the range goes stale', () => {

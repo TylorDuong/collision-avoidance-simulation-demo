@@ -78,6 +78,17 @@ test('collision evaluator escalates immediately and releases with hysteresis', (
   assert.equal(r.reason, 'ttc');
 });
 
+test('collision evaluator: releaseMargin widens a narrow release band', () => {
+  const z = { ...ZONES, releaseMargin: 0.1 };
+  const ev = new CollisionEvaluator(z);
+  let t = 0;
+  const step = (range) => ev.evaluate({ range, closingSpeed: 0, valid: true }, (t += 0.1));
+  assert.equal(step(0.25).threat, 'RA');
+  // Past the release factor (0.3 × 1.15 = 0.345) but inside the margin (0.4): stays RA.
+  for (let i = 0; i < 10; i++) assert.equal(step(0.37).threat, 'RA');
+  assert.equal(step(0.41).threat, 'TA');
+});
+
 test('collision evaluator holds a level for the minimum time, then decays without data', () => {
   const ev = new CollisionEvaluator(ZONES);
   ev.evaluate({ range: 0.2, closingSpeed: 0, valid: true }, 0);

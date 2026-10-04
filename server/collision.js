@@ -31,11 +31,12 @@ export class CollisionEvaluator {
     this.enteredAt = -Infinity;
   }
 
-  // Highest level whose range or TTC threshold (scaled by fr / ft) is violated.
-  _levelFor(range, ttc, fr, ft) {
+  // Highest level whose range or TTC threshold (scaled by fr / ft, range widened by at least
+  // `margin` m) is violated.
+  _levelFor(range, ttc, fr, ft, margin = 0) {
     const { RA, TA, proximate } = this.z;
     const hit = (zone) => {
-      if (range < zone.range * fr) return 'range';
+      if (range < Math.max(zone.range * fr, zone.range + margin)) return 'range';
       if (zone.ttc != null && ttc != null && ttc < zone.ttc * ft) return 'ttc';
       return null;
     };
@@ -60,11 +61,12 @@ export class CollisionEvaluator {
       this.enteredAt = t;
     } else if (target.level < this.level) {
       // De-escalate only after the minimum hold, and only as far as the looser
-      // release thresholds allow.
+      // release thresholds allow: the range must clear the zone by releaseRangeFactor and by
+      // releaseMargin, so sensor noise at the edge does not flick the level in and out.
       const held = t - this.enteredAt < this.z.minHoldSeconds;
       const released =
         valid && range != null
-          ? this._levelFor(range, ttc, this.z.releaseRangeFactor, this.z.releaseTtcFactor)
+          ? this._levelFor(range, ttc, this.z.releaseRangeFactor, this.z.releaseTtcFactor, this.z.releaseMargin ?? 0)
           : target;
       if (!held && released.level < this.level) {
         this.level = released.level;

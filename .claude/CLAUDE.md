@@ -29,7 +29,7 @@ npm test                         # node --test
 ## Layout
 
 - `shared/` — protocol (JSON messages, threat levels) and navigation maths. Used by server, web and tools.
-- `server/` — `engine.js` is the transport-independent core (ultrasonic ranges, filter, collision, state snapshot); `index.js` is the HTTP/WebSocket shell; `devices.js` is the board endpoint; `fusion/rangeFilter.js`, `collision.js`, `live.js` (inch-to-NM zone scale, sample altitudes), `settings.js` (dashboard-editable zones); all tunables in `config.js`.
+- `server/` — `engine.js` is the transport-independent core (ultrasonic ranges, filter, collision, state snapshot); `index.js` is the HTTP/WebSocket shell; `devices.js` is the board endpoint; `fusion/rangeFilter.js` (+ `fusion/boardPrefilter.js`: per-board spike check and offset between the sensors), `collision.js`, `live.js` (inch-to-NM zone scale, sample altitudes), `settings.js` (dashboard-editable zones); all tunables in `config.js`.
 - `web/dashboard/` — shell (connection, store, HUD) plus `views/tcas` and `views/scene3d`. Add a view by implementing `{ mount, update, resize, unmount }` and registering it in `views/index.js`.
 - `tools/` — `mock-esp32.js` (simulated boards), `mock-airspace.js` + `sim/airspace.js` (TCAS scenario).
 - `firmware/esp32-actuator/` — Arduino sketch. `secrets.h` is git-ignored; copy it from `secrets.example.h`.
@@ -39,7 +39,7 @@ npm test                         # node --test
 - Every distance reading goes through the one Kalman filter in `server/fusion/rangeFilter.js`. Put tunables in `server/config.js`, not inline.
 - State sent to the dashboard is always in airspace display units (metres of the simulated airspace, shown in NM). `mode` is `live` (boards) or `sim` (simulator); the real board gap is in `state.live.range`.
 - The TCAS view follows the TCAS II v7.1 intro booklet (`docs/`). Extend `web/dashboard/views/tcas/` rather than redesigning it. TCAS logic in `tools/sim/airspace.js` is simplified, sensitivity level 5.
-- Threat levels use TCAS names: `other`, `proximate`, `TA`, `RA`. Raising a level is immediate; lowering uses hysteresis.
+- Threat levels use TCAS names: `other`, `proximate`, `TA`, `RA`. Raising a level is immediate; lowering uses hysteresis (release factor and inch margin, minimum hold).
 - Keep `tools/mock-esp32.js` in step with the firmware's protocol and relay rules.
 - Add tests in `test/` for new logic. The suite runs without hardware.
 

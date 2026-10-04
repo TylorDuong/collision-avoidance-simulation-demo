@@ -148,7 +148,7 @@ To add a view, implement `{ mount, update, resize, unmount }` and register it as
 Each ESP32 carries one ultrasonic distance sensor (for example an HC-SR04 or a waterproof JSN-SR04T) aimed at the other board.
 
 - **Firmware:** `firmware/esp32-actuator` triggers the sensor at 10 Hz (`TRIG_PIN` / `ECHO_PIN`; set them to your wiring), converts the echo time to metres, and sends `{t:'range', range}` over the `/device` WebSocket. `range` is `null` when no echo came back.
-- **Filtering:** the server (`engine.handleRange`) feeds every reading into one Kalman filter (`server/fusion/rangeFilter.js`). Both boards measure the same gap, so each reading is an independent measurement. A reading outside 2 cm to 4 m counts as no echo and is not filtered (`ultrasonic` in `server/config.js`). A board that stays silent for 2 s shows NO SIGNAL.
+- **Filtering:** the server (`engine.handleRange`) feeds every reading into one Kalman filter (`server/fusion/rangeFilter.js`). Both boards measure the same gap, so each reading is an independent measurement. Before the filter, each board's readings are cleaned (`server/fusion/boardPrefilter.js`): a reading more than 2 in from the median of that board's last 3 echoes is a spike and is replaced by the median, and the fixed offset between the two sensors is learned and removed, so the fused range does not zig-zag between the boards. A reading outside 2 cm to 4 m counts as no echo and is not filtered (`ultrasonic` in `server/config.js`). A board shows "no echo" only after 0.5 s without one, and NO SIGNAL after 2 s of silence.
 - **Drawn as a TCAS encounter:** the server draws the real gap on one axis, with A and B head-on and each straight ahead of the other (bearing 0).
 - **Zones at real-world TCAS dimensions:** the scale from inches to NM is piecewise (`server/live.js`). Each zone boundary in real inches is drawn at its real-world radius: RA (6 in) at 1.1 NM, TA (10 in) at 1.4 NM and proximate (18 in) at 6 NM. Past 18 in, the last segment's scale continues. The radii and vertical limits (RA 700 ft, TA 850 ft, proximate 1200 ft) are `live.displayZones` and `live.verticalZones` in `server/config.js`.
 - **Sample altitudes:** the boards measure distance only, so A flies at 8,000 ft and B 300 ft below. A's display tags B `−03`, and B's tags A `+03`. The vertical limits apply: traffic further apart vertically than a zone's limit does not raise that level, and the threat reason then reads "outside vertical limit".
@@ -230,7 +230,7 @@ Levels follow TCAS naming. A level triggers on distance **or** time-to-collision
 
 These are tuned for ultrasonic boards that read up to about 20 in. Proximate sits just inside that so it doesn't flicker at the sensor's limit. A TTC of 0.1 s is the minimum, which switches the closing-speed test off, so the levels depend on distance only. Raise the times to warn earlier when the boards close fast. The dashboard's "Live demo zones" card changes all of these live. `data/settings.json`, written by that card, overrides these defaults, so delete it to return to them.
 
-A higher level takes effect immediately. A lower level only takes effect after 0.6 s, and only once the distance or TTC clears a looser release threshold (×1.15 for distance, ×1.3 for TTC), so warnings don't flicker. The sample altitudes then apply the TCAS vertical limits on top.
+A higher level takes effect immediately. A lower level only takes effect after 1 s, and only once the distance or TTC clears a looser release threshold (distance: ×1.15 and at least 1.5 in past the zone; TTC: ×1.3), so warnings don't flicker when a board hovers at a zone's edge. The sample altitudes then apply the TCAS vertical limits on top.
 
 ## Project layout
 
@@ -240,7 +240,7 @@ server/
   index.js       HTTP server on one port: static dashboard, /ws (dashboard, simulator), /device (boards)
   engine.js      transport-independent core: ultrasonic ranges, filter, collision, state snapshot
   devices.js     ESP32 board endpoint: range readings in, alerts and test pulses out
-  fusion/        range Kalman filter
+  fusion/        range Kalman filter, per-board spike check and sensor offset
   collision.js   threat levels with hysteresis, RA sense selection
   live.js        zone scale (inches -> NM) and the sample altitudes
   settings.js    live demo zones, edited from the dashboard and saved to data/settings.json
