@@ -55,7 +55,8 @@ export class CollisionEvaluator {
         this.reason = released.reason;
         this.enteredAt = t;
       }
-    } else if (target.reason) {
+    } else {
+      // Same level: follow the current reason, which also clears a stale 'no-data' at level 0.
       this.reason = target.reason;
     }
     return { threat: THREAT[this.level], level: this.level, reason: this.reason, ttc };

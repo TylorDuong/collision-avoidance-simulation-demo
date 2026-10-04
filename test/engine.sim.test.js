@@ -71,8 +71,14 @@ test('acoustic ranging tracks a moving phone within a few centimetres', () => {
   assert.ok(median < 0.05, `median error ${median}`);
   assert.ok(p95 < 0.1, `p95 error ${p95}`);
   for (const level of ['other', 'proximate', 'TA', 'RA']) assert.ok(threats.has(level), `never reached ${level}`);
-  assert.equal(state.traffic[0].id, 'B');
-  assert.equal(state.traffic[0].bearing, null);
+  const { A, B } = state.perspectives;
+  assert.equal(A.ownship.id, 'A');
+  assert.equal(A.traffic[0].id, 'B');
+  assert.equal(A.traffic[0].bearing, null);
+  assert.equal(B.ownship.id, 'B');
+  assert.equal(B.traffic[0].id, 'A');
+  assert.equal(B.traffic[0].range, A.traffic[0].range);
+  assert.equal(B.traffic[0].threat, A.traffic[0].threat);
 });
 
 test('calibration solves the speaker-to-mic constant at a known distance', () => {

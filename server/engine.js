@@ -238,6 +238,25 @@ export class Engine {
     this.source = source;
   }
 
+  _perspective(ownId, otherId, range, relAlt) {
+    return {
+      ownship: { id: ownId, heading: this.phones[ownId].orientation.heading },
+      traffic: this.phones[otherId].connected
+        ? [
+            {
+              id: otherId,
+              range: range.range,
+              rangeRate: range.rangeRate,
+              bearing: null, // not observable with range-only sensing
+              relAlt,
+              relAltRate: null,
+              threat: this.threat.threat,
+            },
+          ]
+        : [],
+    };
+  }
+
   getState() {
     const t = this.now();
     const est = this.estimate ?? null;
@@ -283,21 +302,12 @@ export class Engine {
         running: this.ranging.ready(),
       },
       threat: { level: this.threat.threat, reason: this.threat.reason },
-      // TCAS-style traffic picture: phone A is "own ship", B is traffic.
-      ownship: { id: 'A', heading: this.phones.A.orientation.heading },
-      traffic: this.phones.B.connected
-        ? [
-            {
-              id: 'B',
-              range: range.range,
-              rangeRate: range.rangeRate,
-              bearing: null, // not observable with range-only sensing
-              relAlt,
-              relAltRate: null,
-              threat: this.threat.threat,
-            },
-          ]
-        : [],
+      // TCAS-style traffic pictures, one per phone: that phone is "own ship", the other is
+      // traffic. Range and threat are symmetric; relative altitude flips sign.
+      perspectives: {
+        A: this._perspective('A', 'B', range, relAlt),
+        B: this._perspective('B', 'A', range, relAlt === null ? null : -relAlt),
+      },
       calibration: {
         state: this.calibration.state,
         progress: this.calibration.raws.length / this.cfg.calibration.samples,

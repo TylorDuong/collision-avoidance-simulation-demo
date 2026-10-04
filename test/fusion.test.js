@@ -68,6 +68,14 @@ test('collision evaluator holds a level for the minimum time, then decays withou
   assert.equal(ev.evaluate({ range: null, closingSpeed: 0, valid: false }, 1).threat, 'other');
 });
 
+test('collision: no-data reason clears once range returns at level other', () => {
+  const ev = new CollisionEvaluator(config.zones);
+  assert.equal(ev.evaluate({ range: null, closingSpeed: 0, valid: false }, 0).reason, 'no-data');
+  const r = ev.evaluate({ range: 2.0, closingSpeed: 0, valid: true }, 0.1);
+  assert.equal(r.threat, 'other');
+  assert.equal(r.reason, null);
+});
+
 test('device orientation Euler angles map to the expected rotations', () => {
   // alpha 90°: device x-axis (right edge) points north (+Y in ENU).
   const q1 = fromDeviceOrientation(90, 0, 0);
