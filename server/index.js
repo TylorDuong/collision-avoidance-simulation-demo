@@ -112,6 +112,8 @@ wss.on('connection', (ws, req) => {
     else if (role === 'dashboard' && msg.t === MSG.CALIBRATE) {
       const d = Number(msg.distance);
       engine.calibrate(Number.isFinite(d) && d > 0 ? d : undefined);
+    } else if (role === 'dashboard' && msg.t === MSG.SETTINGS) {
+      engine.applySettings(msg);
     } else if (role === 'dashboard' && msg.t === MSG.DEVICE_TEST) {
       devices.test(msg.id, Math.min(5000, Math.max(100, Number(msg.ms) || 1000)));
     }

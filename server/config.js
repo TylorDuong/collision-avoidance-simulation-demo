@@ -1,5 +1,7 @@
 // Central tunables. Override ports via env: HTTPS_PORT, HTTP_PORT.
 
+const IN = 0.0254; // m per inch
+
 export const config = {
   httpsPort: Number(process.env.HTTPS_PORT) || 8443,
   // Plain-HTTP port: serves the root CA for iPhone install and redirects everything else to HTTPS.
@@ -47,6 +49,15 @@ export const config = {
     signalTimeoutSeconds: 2, // a board silent this long shows NO SIGNAL
   },
 
+  // Live demo: the real ultrasonic gap between A and B is drawn on the TCAS demo display (NM,
+  // kt, head-on on one axis) at this scale. Editable from the dashboard; saved to `file`.
+  live: {
+    nmPerInch: 0.2, // displayed NM per real inch of ultrasonic distance (20 in -> 4 NM, fits the 5 NM range)
+  },
+  settings: {
+    file: 'data/settings.json',
+  },
+
   filter: {
     sigmaAcoustic: 0.03, // m
     sigmaUltrasonic: 0.02, // m
@@ -64,11 +75,15 @@ export const config = {
     useAboveRange: 8, // m
   },
 
-  // Threat zones. TA ≈ "caution", RA ≈ "danger".
+  // Threat zones (metres, written as inches). TA ≈ "caution", RA ≈ "danger". Tuned for the
+  // ultrasonic boards, which read up to about 20 in: proximate sits just inside that so it
+  // does not flicker at the sensor's limit. The times (s) are the minimum allowed, which
+  // switches the closing-speed test off, so the levels depend on distance only. Raise them to
+  // warn earlier when the planes close fast. Editable live from the dashboard.
   zones: {
-    proximate: { range: 1.5 },
-    TA: { range: 0.75, ttc: 2.5 },
-    RA: { range: 0.3, ttc: 1.0 },
+    proximate: { range: 18 * IN },
+    TA: { range: 10 * IN, ttc: 0.1 },
+    RA: { range: 6 * IN, ttc: 0.1 },
     releaseRangeFactor: 1.15,
     releaseTtcFactor: 1.3,
     minHoldSeconds: 0.6,

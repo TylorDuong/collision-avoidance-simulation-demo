@@ -36,7 +36,8 @@ test('two boards produce an ultrasonic range estimate with no phones connected',
   });
   const s = engine.getState();
   assert.equal(s.range.source, 'ultrasonic');
-  assert.ok(Math.abs(s.range.range - 1.2) < 0.05, `range ${s.range.range}`);
+  // In the demo UI `range` is in display units; the real gap (m) is in `live.range`.
+  assert.ok(Math.abs(s.live.range - 1.2) < 0.05, `range ${s.live.range}`);
   assert.deepEqual(s.ultrasonic.boards.map((b) => [b.id, b.status]), [['1', 'ok'], ['2', 'ok']]);
   // The other node is traffic in both TCAS perspectives even though no phone is connected.
   assert.equal(s.perspectives.A.traffic.length, 1);
@@ -134,6 +135,6 @@ test('the other node stays on both displays between accepted readings', () => {
   for (const [own, other] of [['A', 'B'], ['B', 'A']]) {
     assert.equal(s.perspectives[own].traffic.length, 1);
     assert.equal(s.perspectives[own].traffic[0].id, other);
-    assert.ok(Math.abs(s.perspectives[own].traffic[0].range - 1.0) < 0.1); // same distance on both
+    assert.ok(Math.abs(s.perspectives[own].traffic[0].range - 1.0 * s.live.scale) < 0.1 * s.live.scale); // same distance on both
   }
 });

@@ -32,6 +32,7 @@ export const MSG = {
   // dashboard -> server
   CALIBRATE: 'calibrate', // { distance }
   DEVICE_TEST: 'deviceTest', // { id?, ms? } — pulse an actuator's RA output
+  SETTINGS: 'settings', // { nmPerInch?, proximateIn?, taIn?, raIn?, taTtc?, raTtc? } — live demo scale and zones
   // actuator device <-> server (see server/devices.js)
   APPLIED: 'applied', // device -> server { level, mechanism }
   TEST: 'test', // server -> device { ms }
