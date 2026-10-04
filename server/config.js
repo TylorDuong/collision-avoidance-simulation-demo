@@ -74,4 +74,11 @@ export const config = {
     minHoldSeconds: 0.6,
     minClosingSpeed: 0.05, // m/s, below this TTC is undefined
   },
+
+  // RA sense coordination between A and B (proximity mode): the senses are always
+  // complementary. With a GPS height difference at least this large (m) the higher node
+  // climbs; otherwise A climbs and B descends.
+  ra: {
+    senseAltThreshold: 1.0,
+  },
 };
