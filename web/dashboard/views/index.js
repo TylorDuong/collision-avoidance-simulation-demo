@@ -1,9 +1,11 @@
-// View registry. Add a view by implementing { mount, update, resize, unmount } and listing it here.
+// Tab registry. Each tab owns a panel in index.html (`panel` is its id); `create()` returns
+// one view per mount point in that panel, in order. A view implements
+// { mount, update, resize, unmount }.
 
 import { createScene3dView } from './scene3d/scene3dView.js';
 import { createTcasView } from './tcas/tcasView.js';
 
 export const VIEWS = {
-  scene3d: { label: '3D', create: createScene3dView },
-  tcas: { label: 'TCAS', create: createTcasView },
+  tcas: { label: 'TCAS', panel: 'cockpit', create: () => [createTcasView({ ownId: 'A' }), createTcasView({ ownId: 'B' })] },
+  scene3d: { label: '3D', panel: 'scene3d', create: () => [createScene3dView()] },
 };

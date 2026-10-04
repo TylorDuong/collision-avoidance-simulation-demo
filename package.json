@@ -12,7 +12,8 @@
     "watch": "vite build --watch",
     "start": "node server/index.js",
     "dev": "node scripts/dev.js",
-    "mock": "node tools/mock-phones.js",
+    "mock": "node tools/mock-airspace.js",
+    "mock:phones": "node tools/mock-phones.js",
     "certs": "node scripts/make-certs.js",
     "test": "node --test",
     "mock:esp32": "node tools/mock-esp32.js"

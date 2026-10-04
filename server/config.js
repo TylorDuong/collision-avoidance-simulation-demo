@@ -10,6 +10,7 @@ export const config = {
   deviceToken: process.env.DEVICE_TOKEN || null,
 
   tickHz: 60,
+  airspaceFreshSeconds: 2, // simulated airspace older than this is dropped (back to phones)
   stateBroadcastHz: 30,
   pingIntervalMs: 1000,
 

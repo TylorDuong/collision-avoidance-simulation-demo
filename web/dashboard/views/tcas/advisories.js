@@ -1,11 +1,23 @@
 // TCAS advisory state: turns the threat level of the most severe traffic into the
-// on-screen advisory text and fires sound cues on transitions.
-// Placeholder logic, refined in later iterations (real RA sense selection, VSI band,
-// "ADJUST VERTICAL SPEED", RA strengthening/weakening, etc.).
+// advisory text (TCAS II v7.1 aural annunciations, booklet Table 4), the RA guidance for
+// the vertical speed indicator (red = rates to avoid, green = rate to fly, Table 3) and
+// sound cues on transitions.
+// Still simplified: only the initial Climb / Descend RA, no strengthening, weakening,
+// reversal or preventive RAs.
 
 import { TCAS_COLORS } from './symbols.js';
 
 const CLEAR_OF_CONFLICT_MS = 3000;
+const ORDER = { other: 0, proximate: 1, TA: 2, RA: 3 };
+
+// VSI dial units (1 = 1000 fpm on a real IVSI). Climb RA: fly 1500–2000 fpm, avoid
+// anything below 1500 fpm. Descend RA is the mirror image.
+export const VSI_MAX = 6;
+const RA_VSI = {
+  up: { green: [1.5, 2], red: [[-VSI_MAX, 1.5]] },
+  down: { green: [-2, -1.5], red: [[-1.5, VSI_MAX]] },
+};
+const RA_TEXT = { up: 'CLIMB, CLIMB', down: 'DESCEND, DESCEND' };
 
 /** Sound cue hook. No-op for now; wire up Web Audio / speechSynthesis later. */
 export function announce(type) {
@@ -13,35 +25,49 @@ export function announce(type) {
 }
 
 /**
- * Pick an RA sense. Without vertical information, ask for separation.
- * @returns {string}
+ * Pick an RA sense: away from the intruder vertically. Without vertical information the
+ * sense is an arbitrary choice; climb is used.
+ * @returns {'up'|'down'}
  */
 export function resolveSense(traffic) {
-  if (traffic?.relAlt === null || traffic?.relAlt === undefined) return 'INCREASE SEPARATION';
-  return traffic.relAlt > 0 ? 'DESCEND, DESCEND' : 'CLIMB, CLIMB';
+  const relAlt = traffic?.relAlt;
+  if (relAlt === null || relAlt === undefined) return 'up';
+  return relAlt > 0 ? 'down' : 'up';
 }
 
 export class AdvisoryTracker {
   constructor() {
     this.level = 'other';
+    this.sense = null; // latched for the life of an RA
     this.clearUntil = 0;
   }
 
   /**
-   * @param {Array} traffic state.traffic
+   * @param {Array} traffic perspective traffic list
    * @param {number} now ms
-   * @returns {{ banner: {text: string, color: string, level: string} | null, primary: object | null }}
+   * @param {object} [ownship] perspective own ship: `ra.sense` (the sense its TCAS selected)
+   *   is used when present, and mode 'TA ONLY' downgrades RAs to TAs, 'STBY' shows nothing.
+   * @returns {{ banner: {text: string, color: string, level: string, vsi?: object} | null, primary: object | null }}
    */
-  update(traffic, now) {
-    const order = { other: 0, proximate: 1, TA: 2, RA: 3 };
+  update(traffic, now, ownship = null) {
+    const mode = ownship?.mode ?? 'TA/RA';
+    const cap = (threat) => (mode === 'STBY' ? 'other' : mode === 'TA ONLY' && threat === 'RA' ? 'TA' : threat);
     let primary = null;
-    for (const t of traffic) if (!primary || order[t.threat] > order[primary.threat]) primary = t;
-    const level = primary?.threat ?? 'other';
+    for (const t of traffic) if (!primary || ORDER[cap(t.threat)] > ORDER[cap(primary.threat)]) primary = t;
+    const level = primary ? cap(primary.threat) : 'other';
 
+    if (level === 'RA' && this.level === 'RA' && ownship?.ra?.sense && ownship.ra.sense !== this.sense) {
+      this.sense = ownship.ra.sense; // sense reversal from own TCAS
+      announce(this.sense === 'up' ? 'CLIMB' : 'DESCEND');
+    }
     if (level !== this.level) {
-      if (level === 'TA' && order[this.level] < order.TA) announce('TRAFFIC');
-      if (level === 'RA') announce('RA');
+      if (level === 'TA' && ORDER[this.level] < ORDER.TA) announce('TRAFFIC');
+      if (level === 'RA') {
+        this.sense = ownship?.ra?.sense ?? resolveSense(primary);
+        announce(this.sense === 'up' ? 'CLIMB' : 'DESCEND');
+      }
       if (this.level === 'RA' && level !== 'RA') {
+        this.sense = null;
         announce('CLEAR_OF_CONFLICT');
         this.clearUntil = now + CLEAR_OF_CONFLICT_MS;
       }
@@ -49,7 +75,7 @@ export class AdvisoryTracker {
     }
 
     let banner = null;
-    if (level === 'RA') banner = { text: resolveSense(primary), color: TCAS_COLORS.RA, level };
+    if (level === 'RA') banner = { text: RA_TEXT[this.sense], color: TCAS_COLORS.RA, level, sense: this.sense, vsi: RA_VSI[this.sense] };
     else if (level === 'TA') banner = { text: 'TRAFFIC, TRAFFIC', color: TCAS_COLORS.TA, level };
     else if (now < this.clearUntil) banner = { text: 'CLEAR OF CONFLICT', color: TCAS_COLORS.clear, level: 'clear' };
     return { banner, primary };

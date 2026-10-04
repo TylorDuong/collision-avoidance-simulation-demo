@@ -1,26 +1,81 @@
-// TCAS II traffic symbology, drawn on a 2D canvas.
-//   other      hollow diamond, cyan/white
-//   proximate  filled diamond, cyan/white
+// TCAS II traffic symbology (TCAS II v7.1 intro booklet, Fig. 2), drawn on a 2D canvas.
+//   own ship   white airplane symbol
+//   other      hollow cyan diamond (never the own-ship colour)
+//   proximate  filled cyan diamond
 //   TA         filled amber circle
 //   RA         filled red square
-// Data tag: relative altitude in units (default 0.1 m, "hundreds of feet" scaled down)
-// with sign, above the symbol when traffic is above and below when it is below,
-// plus a vertical-trend arrow.
+// Data tag: relative altitude as a signed two-digit number of tag units (hundreds of feet
+// for aircraft, 0.1 m for phones), above the symbol when traffic is above and below when
+// it is below, omitted when altitude is unknown. A vertical-trend arrow sits immediately
+// right of the symbol. Everything in the tag is drawn in the symbol's colour.
+// State values are SI (m, m/s); a unit profile (UNITS) converts them for display.
 
 export const TCAS_COLORS = {
   ownship: '#ffffff',
-  ring: '#c8c8c8',
+  ring: '#ffffff', // range markings and range annunciation use the own-ship colour
+  scale: '#ffffff', // VSI scale ticks and numerals
   other: '#00e5ff',
   proximate: '#00e5ff',
   TA: '#ffbf00',
   RA: '#ff2a2a',
+  vsiRed: '#ff2a2a', // RA: vertical speeds to avoid
+  vsiGreen: '#2bff6a', // RA: vertical speed to fly
   clear: '#2bff6a',
   text: '#ffffff',
-  dim: '#6b7680',
+  data: '#00e5ff', // own-ship data and status annunciations
+  dim: '#6b7680', // chrome outside the instrument
 };
 
-export const RELALT_UNIT = 0.1; // metres per data-tag unit
-export const TREND_THRESHOLD = 0.1; // m/s vertical rate before an arrow is shown
+const NM = 1852;
+const FT = 0.3048;
+
+/**
+ * Display unit profiles, picked by state.mode.
+ *   range       metres per displayed range unit, `rangeUnit` its label
+ *   relAlt      metres per data-tag unit
+ *   trend       vertical rate (m/s) beyond which a trend arrow is shown
+ *   vsi         m/s per VSI dial unit
+ *   altFilter   display altitude bands { NORM, ABV, BLW } as [below, above] in metres
+ */
+export const UNITS = {
+  airspace: {
+    rangeUnit: 'NM',
+    range: NM,
+    ranges: [5, 10, 20, 40],
+    defaultRange: 10,
+    rangeDigits: 1,
+    relAlt: 100 * FT,
+    trend: 500 * (FT / 60),
+    vsi: 1000 * (FT / 60),
+    altFilter: { NORM: [-2700 * FT, 2700 * FT], ABV: [-2700 * FT, 9900 * FT], BLW: [-9900 * FT, 2700 * FT] },
+    altitude: (m) => `${Math.round(m / FT / 10) * 10}`,
+    altitudeUnit: 'FT',
+    speed: (ms) => `${Math.round(ms / (NM / 3600))}`,
+    speedUnit: 'KT',
+    vs: (ms) => Math.round(ms / (FT / 60) / 50) * 50,
+    vsUnit: 'FPM',
+  },
+  phones: {
+    rangeUnit: 'm',
+    range: 1,
+    ranges: [1, 2, 5, 10],
+    defaultRange: 5,
+    rangeDigits: 2,
+    relAlt: 0.1,
+    trend: 0.1,
+    vsi: 0.1,
+    altFilter: { NORM: [-Infinity, Infinity], ABV: [-Infinity, Infinity], BLW: [-Infinity, Infinity] },
+    altitude: (m) => m.toFixed(1),
+    altitudeUnit: 'm',
+    speed: (ms) => ms.toFixed(1),
+    speedUnit: 'm/s',
+    vs: (ms) => Number(ms.toFixed(2)),
+    vsUnit: 'm/s',
+  },
+};
+
+const FONT = "'B612 Mono', ui-monospace, monospace";
+const known = (v) => v !== null && v !== undefined && !Number.isNaN(v);
 
 export function drawOwnship(ctx, x, y, size, color = TCAS_COLORS.ownship) {
   const s = size;
@@ -41,75 +96,107 @@ export function drawOwnship(ctx, x, y, size, color = TCAS_COLORS.ownship) {
   ctx.restore();
 }
 
-/** @param {'other'|'proximate'|'TA'|'RA'} threat */
-export function drawTraffic(ctx, x, y, size, threat) {
-  const h = size / 2;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.lineWidth = Math.max(1.5, size * 0.12);
-  const color = TCAS_COLORS[threat];
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
+function tracePath(ctx, h, threat) {
   ctx.beginPath();
   switch (threat) {
     case 'RA':
       ctx.rect(-h * 0.85, -h * 0.85, h * 1.7, h * 1.7);
-      ctx.fill();
       break;
     case 'TA':
       ctx.arc(0, 0, h * 0.9, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    case 'proximate':
-      diamond(ctx, h);
-      ctx.fill();
       break;
     default:
-      diamond(ctx, h);
-      ctx.stroke();
+      ctx.moveTo(0, -h);
+      ctx.lineTo(h, 0);
+      ctx.lineTo(0, h);
+      ctx.lineTo(-h, 0);
+      ctx.closePath();
   }
+}
+
+/** @param {'other'|'proximate'|'TA'|'RA'} threat */
+export function drawTraffic(ctx, x, y, size, threat) {
+  const color = TCAS_COLORS[threat];
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.lineWidth = Math.max(1.5, size * 0.12);
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  tracePath(ctx, size / 2, threat);
+  if (threat === 'other') ctx.stroke();
+  else ctx.fill();
   ctx.restore();
 }
 
-function diamond(ctx, h) {
-  ctx.moveTo(0, -h);
-  ctx.lineTo(h, 0);
-  ctx.lineTo(0, h);
-  ctx.lineTo(-h, 0);
-  ctx.closePath();
+/**
+ * Off-scale TA/RA: the half of the symbol that lies inside the display edge, centred on
+ * the edge at the traffic's bearing.
+ * @param {number} bearingRad relative bearing, clockwise from up
+ */
+export function drawHalfSymbol(ctx, x, y, size, threat, bearingRad) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(bearingRad);
+  ctx.beginPath();
+  ctx.rect(-size, 0, size * 2, size); // keep the inward half (towards the centre)
+  ctx.clip();
+  ctx.rotate(-bearingRad);
+  drawTraffic(ctx, 0, 0, size, threat);
+  ctx.restore();
 }
 
-/** "+02" / "-01" / "--" */
-export function formatRelAlt(relAlt) {
-  if (relAlt === null || relAlt === undefined) return '--';
-  const units = Math.round(relAlt / RELALT_UNIT);
-  const sign = units >= 0 ? '+' : '−';
-  return `${sign}${String(Math.min(99, Math.abs(units))).padStart(2, '0')}`;
+/** "+02" / "−01" / "00", or "" when altitude is unknown (nothing is shown). */
+export function formatRelAlt(relAlt, units = UNITS.phones) {
+  if (!known(relAlt)) return '';
+  const n = Math.min(99, Math.abs(Math.round(relAlt / units.relAlt)));
+  if (n === 0) return '00';
+  return `${relAlt > 0 ? '+' : '−'}${String(n).padStart(2, '0')}`;
 }
 
-export function drawDataTag(ctx, x, y, size, { relAlt, relAltRate }, color) {
-  const text = formatRelAlt(relAlt);
-  const below = relAlt !== null && relAlt !== undefined && relAlt < 0;
+/** "↑" / "↓" when the vertical rate is past the trend threshold, else "". */
+export function trendGlyph(rate, units = UNITS.phones) {
+  if (!known(rate) || Math.abs(rate) < units.trend) return '';
+  return rate > 0 ? '↑' : '↓';
+}
+
+/** Range in display units, e.g. "4.5" (NM) or "0.28" (m). */
+export function formatRange(range, units = UNITS.phones) {
+  const v = range / units.range;
+  return v > 99.9 ? '>99' : v.toFixed(units.rangeDigits);
+}
+
+/** Written no-bearing advisory, e.g. "RA 4.5 +12↓". */
+export function formatNoBearing({ threat, range, relAlt, relAltRate }, units = UNITS.phones) {
+  const parts = [threat, formatRange(range, units)];
+  const alt = formatRelAlt(relAlt, units);
+  if (alt) parts.push(alt + trendGlyph(relAltRate, units)); // the arrow needs a reported altitude
+  return parts.join(' ');
+}
+
+export function drawDataTag(ctx, x, y, size, { relAlt, relAltRate }, color, units = UNITS.phones) {
+  if (!known(relAlt)) return; // altitude not reported: no tag, no arrow
+  const text = formatRelAlt(relAlt, units);
+  const below = relAlt < 0 && text !== '00';
   const fontPx = Math.round(size * 0.85);
   ctx.save();
   ctx.fillStyle = color;
   ctx.strokeStyle = color;
-  ctx.font = `700 ${fontPx}px 'B612 Mono', ui-monospace, monospace`;
+  ctx.font = `700 ${fontPx}px ${FONT}`;
   ctx.textAlign = 'center';
   ctx.textBaseline = below ? 'top' : 'bottom';
-  const ty = below ? y + size * 0.85 : y - size * 0.85;
-  ctx.fillText(text, x, ty);
+  ctx.fillText(text, x, below ? y + size * 0.7 : y - size * 0.7);
 
-  if (relAltRate !== null && relAltRate !== undefined && Math.abs(relAltRate) >= TREND_THRESHOLD) {
-    const ax = x + size * 1.15;
-    const up = relAltRate > 0;
+  const trend = trendGlyph(relAltRate, units);
+  if (trend) {
+    const ax = x + size * 0.95;
+    const up = trend === '↑';
     const len = size * 0.9;
-    ctx.lineWidth = Math.max(1.5, size * 0.1);
-    ctx.beginPath();
-    ctx.moveTo(ax, y + (up ? len / 2 : -len / 2));
-    ctx.lineTo(ax, y + (up ? -len / 2 : len / 2));
     const tip = y + (up ? -len / 2 : len / 2);
     const d = up ? 1 : -1;
+    ctx.lineWidth = Math.max(1.5, size * 0.1);
+    ctx.beginPath();
+    ctx.moveTo(ax, y - (tip - y));
+    ctx.lineTo(ax, tip);
     ctx.moveTo(ax - size * 0.22, tip + d * size * 0.25);
     ctx.lineTo(ax, tip);
     ctx.lineTo(ax + size * 0.22, tip + d * size * 0.25);

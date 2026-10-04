@@ -1,8 +1,11 @@
 // HUD in two parts: primary telemetry pinned in the top bar (threat, range, closing speed,
-// TTC) and the technical diagnostics in the collapsible bottom drawer.
+// TTC) and the technical diagnostics in the collapsible bottom drawer. In airspace mode
+// (TCAS demo simulator) the top bar shows the A–B pair in NM, knots and range tau.
 
 const LEVEL_TEXT = { other: 'OTHER', proximate: 'PROXIMATE', TA: 'TA', RA: 'RA' };
-const REASON_TEXT = { range: 'inside distance threshold', ttc: 'time-to-collision threshold', 'no-data': 'no range data' };
+const REASON_TEXT = { range: 'inside distance threshold', ttc: 'time-to-collision threshold', tau: 'TCAS tau / DMOD (simulator)', 'no-data': 'no range data' };
+const NM = 1852;
+const KT = NM / 3600;
 const STALE_MS = 2000;
 
 const fmt = (v, digits = 2, unit = '') => {
@@ -25,7 +28,7 @@ export function createPrimaryHud(root) {
     <div class="metric threat" data-level="other"><span class="k">Threat</span><span class="v" data-k="level">—</span></div>
     <div class="metric"><span class="k">Range</span><span class="v" data-k="range">—</span></div>
     <div class="metric"><span class="k">Closing</span><span class="v" data-k="closing">—</span></div>
-    <div class="metric"><span class="k">TTC</span><span class="v" data-k="ttc">—</span></div>`;
+    <div class="metric"><span class="k" data-k="ttc-k">TTC</span><span class="v" data-k="ttc">—</span></div>`;
   const { el, set } = bind(root);
   const threat = root.querySelector('.threat');
 
@@ -35,8 +38,10 @@ export function createPrimaryHud(root) {
       const stale = age > STALE_MS;
       threat.dataset.level = stale ? 'stale' : s.threat.level;
       set('level', stale ? 'NO DATA' : LEVEL_TEXT[s.threat.level]);
-      set('range', fmt(s.range.range, 2, ' m'));
-      set('closing', fmt(s.range.closingSpeed, 2, ' m/s'));
+      const air = s.mode === 'airspace';
+      set('range', air ? fmt(s.range.range / NM, 2, ' NM') : fmt(s.range.range, 2, ' m'));
+      set('closing', air ? fmt(s.range.closingSpeed / KT, 0, ' kt') : fmt(s.range.closingSpeed, 2, ' m/s'));
+      set('ttc-k', air ? 'Tau' : 'TTC');
       set('ttc', s.range.ttc === null ? '—' : fmt(s.range.ttc, 1, ' s'));
     },
   };
@@ -156,7 +161,7 @@ export function createDiagnostics(root, { onCalibrate, onDeviceTest }) {
 
       el.source.dataset.v = s.range.source;
       set('source', s.range.source);
-      set('sigma', s.range.sigma === null ? '—' : `±${fmt(s.range.sigma * 100, 1)} cm`);
+      set('sigma', s.range.sigma === null || s.range.sigma === undefined ? '—' : `±${fmt(s.range.sigma * 100, 1)} cm`);
       set('reason', stale ? 'server state is stale' : REASON_TEXT[s.threat.reason] ?? '—');
 
       const ac = s.acoustic;

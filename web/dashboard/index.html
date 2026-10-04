@@ -12,15 +12,19 @@
   <body>
     <header id="topbar">
       <div id="hud-primary" aria-label="Primary telemetry"></div>
+      <nav id="tabs" role="tablist" aria-label="Views"></nav>
       <div id="conn" class="pill" data-status="connecting">connecting</div>
     </header>
-    <main id="cockpit">
+    <main id="cockpit" class="tab-panel" role="tabpanel" hidden>
       <section class="display" aria-label="A POV">
-        <div id="tcas-mount-a" class="tcas-mount"></div>
+        <div class="tcas-mount" data-mount></div>
       </section>
       <section class="display" aria-label="B POV">
-        <div id="tcas-mount-b" class="tcas-mount"></div>
+        <div class="tcas-mount" data-mount></div>
       </section>
+    </main>
+    <main id="scene3d" class="tab-panel" role="tabpanel" hidden>
+      <div class="tcas-mount" data-mount></div>
     </main>
     <details id="hud-drawer" open>
       <summary>Diagnostics</summary>

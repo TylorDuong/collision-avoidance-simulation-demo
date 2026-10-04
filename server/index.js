@@ -101,10 +101,14 @@ wss.on('connection', (ws, req) => {
       } else if (msg.role === 'dashboard') {
         role = 'dashboard';
         dashboards.add(ws);
+      } else if (msg.role === 'sim') {
+        role = 'sim';
+        console.log(`airspace simulator connected from ${req.socket.remoteAddress}`);
       }
       return;
     }
     if (role === 'phone') engine.handlePhoneMessage(phoneId, msg);
+    else if (role === 'sim' && msg.t === MSG.AIRSPACE) engine.setAirspace(msg);
     else if (role === 'dashboard' && msg.t === MSG.CALIBRATE) {
       const d = Number(msg.distance);
       engine.calibrate(Number.isFinite(d) && d > 0 ? d : undefined);
@@ -115,6 +119,10 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     dashboards.delete(ws);
+    if (role === 'sim') {
+      engine.clearAirspace();
+      console.log('airspace simulator disconnected');
+    }
     if (role === 'phone' && phoneSockets.get(phoneId) === ws) {
       phoneSockets.delete(phoneId);
       engine.disconnectPhone(phoneId);

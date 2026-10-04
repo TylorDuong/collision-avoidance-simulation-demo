@@ -1,11 +1,12 @@
-// Dashboard shell: one connection + store, primary telemetry in the top bar, two mirrored
-// side-by-side ADS-B scopes (A POV, B POV) and a collapsible diagnostics drawer. Every display implements
+// Dashboard shell: one connection + store, primary telemetry in the top bar, tabbed views
+// (TCAS: two mirrored side-by-side displays, A POV and B POV; 3D: the phone scene) and a
+// collapsible diagnostics drawer. Every display implements
 // { mount(el), update(state, dt, info), resize(), unmount() }.
 
 import { createStore } from './store.js';
 import { connect } from './connection.js';
 import { createPrimaryHud, createDiagnostics } from './hud.js';
-import { createTcasView } from './views/tcas/tcasView.js';
+import { VIEWS } from './views/index.js';
 import { MSG } from '../../shared/protocol.js';
 
 const $ = (id) => document.getElementById(id);
@@ -34,19 +35,45 @@ const drawer = $('hud-drawer');
 if (prefs.get('hud-drawer') === 'closed') drawer.open = false;
 drawer.addEventListener('toggle', () => prefs.set('hud-drawer', drawer.open ? 'open' : 'closed'));
 
-// ---- displays ---------------------------------------------------------------------
+// ---- tabs and displays ------------------------------------------------------------
 
-const displays = [];
+const mounted = {}; // tab id -> its displays, created on first visit (the 3D tab starts WebGL)
+let displays = [];
+let currentId = null;
 
 function mountDisplay(el, view) {
   el.replaceChildren();
   view.mount(el);
   new ResizeObserver(() => view.resize()).observe(el);
-  displays.push(view);
+  return view;
 }
 
-mountDisplay($('tcas-mount-a'), createTcasView({ ownId: 'A' }));
-mountDisplay($('tcas-mount-b'), createTcasView({ ownId: 'B' }));
+function switchView(id) {
+  if (!VIEWS[id] || id === currentId) return;
+  for (const [tabId, v] of Object.entries(VIEWS)) $(v.panel).hidden = tabId !== id;
+  const panel = $(VIEWS[id].panel);
+  if (!mounted[id]) {
+    const views = VIEWS[id].create();
+    const slots = panel.querySelectorAll('[data-mount]');
+    mounted[id] = views.map((view, i) => mountDisplay(slots[i], view));
+  }
+  displays = mounted[id];
+  for (const view of displays) view.resize(); // sizes were zero while the panel was hidden
+  currentId = id;
+  prefs.set('dashboard-view', id);
+  for (const b of $('tabs').children) b.setAttribute('aria-selected', String(b.dataset.view === id));
+}
+
+for (const [id, v] of Object.entries(VIEWS)) {
+  const b = document.createElement('button');
+  b.role = 'tab';
+  b.dataset.view = id;
+  b.textContent = v.label;
+  b.addEventListener('click', () => switchView(id));
+  $('tabs').append(b);
+}
+const requested = new URLSearchParams(location.search).get('view') ?? prefs.get('dashboard-view');
+switchView(VIEWS[requested] ? requested : Object.keys(VIEWS)[0]);
 
 // ---- frame loop -------------------------------------------------------------------
 

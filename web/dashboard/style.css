@@ -38,6 +38,19 @@ body {
   background: var(--panel);
 }
 
+#tabs { display: flex; gap: 4px; }
+#tabs button {
+  font: 600 13px/1 var(--mono);
+  letter-spacing: 0.06em;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+#tabs button:hover { color: var(--text); }
+#tabs button[aria-selected='true'] { color: var(--text); background: var(--panel-2); border-color: var(--line); }
 
 .pill {
   font: 12px/1 var(--mono);
@@ -49,7 +62,11 @@ body {
 .pill[data-status='open'] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
 .pill[data-status='closed'] { color: var(--ra); }
 
-/* ---- cockpit: two ADS-B displays, 50/50 ---- */
+/* ---- tab panels ---- */
+[hidden] { display: none !important; }
+#scene3d { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ---- cockpit: two TCAS displays, 50/50 ---- */
 #cockpit {
   flex: 1;
   min-height: 0;
@@ -133,6 +150,34 @@ body {
 .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 150ms; }
 .note { color: var(--muted); font-size: 12px; margin: 0; }
 
-/* ---- traffic scope ---- */
+/* ---- shared view chrome ---- */
 .view-fill { position: absolute; inset: 0; }
+.view-banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 18px;
+  border-radius: 4px;
+  font: 700 18px/1 var(--mono);
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  border: 2px solid currentColor;
+  background: #000;
+}
+.view-banner[data-level='RA'] { animation: blink 0.5s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .view-banner[data-level='RA'] { animation: none; } }
+
+.empty-hint { position: absolute; left: 16px; bottom: 16px; color: var(--muted); font: 12px var(--mono); pointer-events: none; }
+
+/* 3D view labels */
+.label3d { position: absolute; transform: translate(-50%, -100%); font: 700 12px/1 var(--mono); color: var(--text); padding: 3px 6px; border-radius: 4px; background: rgb(0 0 0 / 0.55); pointer-events: none; white-space: nowrap; }
+.label3d-symbol { display: flex; align-items: center; gap: 2px; padding: 0 8px 0 0; background: rgb(0 0 0 / 0.75); }
+
+/* TCAS view */
 .tcas-wrap { position: absolute; inset: 0; background: #000; }
+.tcas-controls { position: absolute; right: 12px; bottom: 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.tcas-controls .group { display: flex; gap: 4px; align-items: center; }
+.tcas-controls .group span { font: 11px var(--mono); color: var(--muted); margin-right: 4px; }
+.tcas-controls .btn { background: #0a0a0a; padding: 6px 9px; }

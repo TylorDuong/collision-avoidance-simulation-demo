@@ -36,6 +36,23 @@ d = c/2 · [(a2 − a1)/fsA − (b2 − b1)/fsB] + K
 | Each phone's orientation | DeviceOrientation, aligned to compass north | good |
 | Direction from A to B | **not observable** | B is drawn on a fixed axis |
 
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js 20+ (ES modules, no TypeScript, no framework) |
+| Server | `ws` for WebSocket over a plain `node:https` server; self-signed certificates via `selfsigned`, trusted ones via [mkcert](https://github.com/FiloSottile/mkcert) |
+| Signal processing | `fft.js` for the FFT matched filter; Kalman filter, quaternion math and TCAS logic written in-house |
+| Web build | [Vite](https://vite.dev) 8 bundles three pages (`/`, `/phone`, `/dashboard`) into `web/dist` |
+| 3D view | [three.js](https://threejs.org) (WebGL, `OrbitControls`) |
+| TCAS view | Canvas 2D, drawn in code to match the TCAS II v7.1 traffic/RA display |
+| Phone | Plain JS in iOS Safari: DeviceOrientation/Motion, Geolocation, `getUserMedia` + an AudioWorklet for 48 kHz capture |
+| Simulation | In-house simulated acoustic world (`tools/sim/world.js`) and simulated airspace (`tools/sim/airspace.js`) |
+| Actuators | ESP32 (Arduino C++) with `WebSockets` and `ArduinoJson` v7, plus ESP-NOW |
+| Tests | `node:test` and `node:assert`, run with `node --test` |
+
+Runtime dependencies are `fft.js`, `selfsigned` and `ws`. `three` and `vite` are dev dependencies, because they only run at build time.
+
 ## Quick start (no phones needed)
 
 Requires Node.js 20 or later.
@@ -44,15 +61,39 @@ Requires Node.js 20 or later.
 npm install
 npm run build        # bundle the web app into web/dist
 npm start            # HTTPS + WSS server on :8443 (HTTP helper on :8080)
-npm run mock         # in a second terminal: two simulated phones
+npm run mock         # in a second terminal: TCAS demo (simulated airspace)
 ```
 
-Open **https://localhost:8443/dashboard**. If you haven't run `npm run certs`, the browser will warn about the self-signed certificate. The mock phones stream synthesized audio in which the chirps arrive with the right delays for a scripted distance. Everything downstream, from detection to fusion to the warnings, is the real code.
+Open **https://localhost:8443/dashboard**. If you haven't run `npm run certs`, the browser will warn about the self-signed certificate.
+
+**TCAS demo (`npm run mock`).** This runs a simulated airspace (`tools/sim/airspace.js`) and streams it to the server. The dashboard switches to aviation units while the stream is live, and falls back to the phones 2 s after it stops. The scenario loops about every two minutes:
+
+1. Aircraft A (8,000 ft, eastbound) and B (7,700 ft, westbound) start 10 NM apart, head-on at 250 kt each.
+2. At about 31 s both get a **TA** (`TRAFFIC, TRAFFIC`).
+3. At about 46 s, 3.5 NM apart, they get a **coordinated RA**. A is above, so A gets `CLIMB, CLIMB` and B gets the complementary `DESCEND, DESCEND`. Both fly it automatically at 1500 fpm after a 2 s response delay.
+4. They pass with about 1,400 ft of vertical separation. Then comes `CLEAR OF CONFLICT`, they return to their cleared altitudes, and the scenario restarts.
+
+Six other aircraft (C–H) are never a threat. They show the remaining symbols:
+- hollow and filled diamonds;
+- climbing and descending trend arrows;
+- one aircraft 4,500 ft above, visible only with the `ABV` filter;
+- one aircraft without altitude reporting.
+
+The threat logic is a simplified TCAS II v7.1 at sensitivity level 5 (booklet Table 2):
+- TA: range tau 40 s, DMOD 0.75 NM, ZTHR 850 ft.
+- RA: range tau 25 s, DMOD 0.55 NM, ZTHR 600 ft.
+- Proximate: within 6 NM and ±1200 ft.
 
 ```bash
-npm run mock -- --script approach     # 2 m → 0.1 m, hold, retreat
-npm run mock -- --script static:0.5   # fixed distance
-npm run mock -- --noise 0.03          # noisier room
+npm run mock -- --rate 2              # run the scenario twice as fast
+```
+
+**Phone pipeline (`npm run mock:phones`).** Two simulated phones stream synthesized audio in which the chirps arrive with the right delays for a scripted distance. Everything downstream, from detection to fusion to the warnings, is the real code.
+
+```bash
+npm run mock:phones -- --script approach     # 2 m → 0.1 m, hold, retreat
+npm run mock:phones -- --script static:0.5   # fixed distance
+npm run mock:phones -- --noise 0.03          # noisier room
 ```
 
 `npm run dev` rebuilds the web app and restarts the server whenever files change.
@@ -83,30 +124,39 @@ Keep both pages in the foreground with the screen on, and don't cover the speake
 
 ## Dashboard
 
-- **3D:** phone A at the origin and B on +X at the fused distance, each with its real orientation. Caution and danger rings are drawn around A. The scene tints and a banner appears on warnings. Drag to orbit, scroll to zoom.
-- **TCAS:** a heading-up traffic display with phone A as own ship.
+- **TCAS:** two side-by-side displays, A POV and B POV. Each aircraft (or phone) is own ship on its own display and sees everything else as traffic. Each display follows the combined TCAS traffic/RA instrument (IVSI) in the TCAS II v7.1 intro booklet (`docs/`, Fig. 2 and Fig. 3):
 
   | Symbol | Meaning |
   |---|---|
+  | white airplane | own ship (centre, heading-up) |
   | hollow cyan diamond | other traffic |
-  | filled cyan diamond | proximate traffic (< 1.5 m) |
-  | filled amber circle | **TA**, traffic advisory (caution) |
-  | filled red square, flashing | **RA**, resolution advisory (danger) |
+  | filled cyan diamond | proximate traffic (within 6 NM and ±1200 ft; phones: < 1.5 m) |
+  | filled amber circle | **TA**, traffic advisory |
+  | filled red square | **RA**, resolution advisory |
 
-  - The data tag shows relative altitude in 0.1 m units, or `--` when unknown.
-  - Bearing isn't measured. B is either plotted at 12 o'clock on a dashed ring at its known range, or shown only as a no-bearing text block (`TA 0.61m --`), the way real TCAS does.
-  - The banner reads `TRAFFIC, TRAFFIC` for a TA, an RA instruction for an RA, and `CLEAR OF CONFLICT` when an RA ends.
-  - Range scales: 1, 2, 4 and 8 m.
-- **HUD:** threat level, distance ± uncertainty, closing speed, time-to-collision, distance source, acoustic success rate and SNR, per-phone rates and latency, and calibration.
-- Switch views with the tabs, or open `/dashboard?view=tcas` directly.
+  - **Traffic:** each aircraft is drawn at its range and relative bearing. A TA or RA beyond the selected range becomes a half symbol at the edge, plus an amber or red `TRAFFIC` annunciation.
+  - **Data tag:** relative altitude as a signed two-digit number in hundreds of feet (phones: 0.1 m). It sits above the symbol when traffic is above and below it when traffic is below, and is omitted without altitude reporting. A trend arrow appears to the right of the symbol when the target climbs or descends faster than 500 fpm.
+  - **Rim:** a vertical speed scale in thousands of fpm (`0 .5 1 2 4 6`, with 0 at 9 o'clock), with the own-ship needle. During an RA, red arcs mark the rates to avoid and a green arc marks the rate to fly (Climb RA: green 1500–2000 fpm, red below 1500). Descend is the mirror image.
+  - **Range markings:** a ring of 12 dots at half scale and a thin ring at full scale, with the selected range boxed. Range buttons: 5, 10, 20 or 40 NM (phones: 1, 2, 5 or 10 m).
+  - **Altitude filter:** `ABV` shows +9900/−2700 ft, `N` (normal) ±2700 ft, `BLW` +2700/−9900 ft. TAs, RAs and traffic without altitude are always shown. Each POV remembers its range and filter.
+  - **Overlay:** own-ship data top-left and top-right (`GS`, `HDG`, `ALT`, `V/S`). The TCAS operating mode (`TA/RA`, `TA ONLY` or `TCAS STBY`) and the altitude display mode (`REL` plus the filter) are on the left.
+  - **No bearing:** phones have no bearing, so a TA or RA is written out as a no-bearing line (`RA 0.28 +02↓`), the way TCAS reports no-bearing advisories. No range ring is drawn.
+  - **Banner:** a visual stand-in for the v7.1 aural annunciations. It reads `TRAFFIC, TRAFFIC`, then `CLIMB, CLIMB` or `DESCEND, DESCEND` (the sense comes from the own ship's TCAS and stays latched for the life of the RA), then `CLEAR OF CONFLICT` when the RA ends.
+- **3D:**
+  - *TCAS demo:* every aircraft as a small airplane model, with a 30 s trail, a drop line to the grid and an altitude label. The grid squares are 2 NM and altitudes are exaggerated ×4. Traffic is coloured by threat level, and A and B show their RA.
+  - *Phones:* phone A at the origin and B on +X at the fused distance, each with its real orientation. The proximate, TA and RA zones around A are drawn in TCAS colours, and B's label shows its TCAS symbol and data tag.
+  - *Both:* the same advisory banner as the TCAS tab. Drag to orbit, scroll to zoom.
+- **HUD:** threat level, range, closing speed and time-to-collision (TCAS demo: NM, kt and range tau). The diagnostics drawer adds the distance source, acoustic success rate and SNR, per-phone rates and latency, and calibration.
+- **Switching views:** use the tabs, or open `/dashboard?view=tcas` or `/dashboard?view=scene3d` directly. The 3D tab starts WebGL only when it is first opened.
 
-The TCAS view is currently a framework. Planned iterations are tracked in `web/dashboard/views/tcas/`:
+Planned TCAS iterations are tracked in `web/dashboard/views/tcas/`:
 - sound cues (`announce()` is stubbed)
-- real RA sense logic and a vertical speed band
+- strengthening, weakening, reversal and preventive RAs
+- own-ship vertical speed from the phones for the IVSI needle
 - auto range scaling
 - bearing placement, once a bearing source exists
 
-To add a view, implement `{ mount, update, resize, unmount }` and register it in `web/dashboard/views/index.js`.
+To add a view, implement `{ mount, update, resize, unmount }` and register it as a tab in `web/dashboard/views/index.js`.
 
 ## ESP32 actuators (LED / mechanism) with ESP-NOW relay
 
@@ -184,7 +234,9 @@ web/
   dashboard/     shell (connection, store, HUD) + views/scene3d + views/tcas
 tools/
   sim/world.js   simulated acoustic world (clocks, latencies, propagation, noise, echo)
-  mock-phones.js two simulated phones over WebSocket
+  sim/airspace.js simulated airspace + simplified TCAS II logic for the demo scenario
+  mock-airspace.js streams the airspace scenario to the server (npm run mock)
+  mock-phones.js two simulated phones over WebSocket (npm run mock:phones)
   mock-esp32.js  simulated ESP32 actuator
 firmware/
   esp32-actuator Arduino sketch: Wi-Fi + WebSocket client driving an LED and a relay/MOSFET
@@ -206,6 +258,8 @@ Covered:
 - collision hysteresis
 - Euler-to-quaternion and north alignment
 - clock sync
+- the simulated airspace: the scripted TA → RA → clear-of-conflict scenario and the TCAS II v7.1 thresholds
+- the advisory tracker (annunciations and the latched RA sense)
 - an end-to-end run through the engine with the simulated acoustic world (tracking error, all four threat levels, calibration)
 
 ## Known limitations

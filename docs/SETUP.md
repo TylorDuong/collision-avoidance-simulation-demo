@@ -27,7 +27,7 @@ npm start
 
 **Check:** the terminal prints `Dashboard: https://localhost:8443/dashboard` and an `ESP32: ws://…:8080/device` line.
 
-- In a **second terminal**: `npm run mock` (two fake phones).
+- In a **second terminal**: `npm run mock:phones` (two fake phones). `npm run mock` is the TCAS airspace demo instead.
 - In a **third terminal**: `npm run mock:esp32` (two fake ESP32s).
 
 Open https://localhost:8443/dashboard. The browser warns about the certificate; click Advanced → Continue. That's expected until Phase 2.
@@ -158,7 +158,7 @@ Do this before the real firmware, so you know uploading works.
 
 ### 3.5 Watch it react without phones
 
-Keep the server running and start `npm run mock` (fake phones only, **not** `mock:esp32`).
+Keep the server running and start `npm run mock:phones` (fake phones only, **not** `mock:esp32`).
 
 **Check:** the real board's LED follows the levels:
 

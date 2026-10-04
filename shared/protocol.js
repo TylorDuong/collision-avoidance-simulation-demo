@@ -14,7 +14,9 @@ export const PHONE_IDS = ['A', 'B'];
 
 export const MSG = {
   // any client -> server
-  HELLO: 'hello', // { role: 'phone'|'dashboard', id?: 'A'|'B', sampleRate?, ua? }
+  HELLO: 'hello', // { role: 'phone'|'dashboard'|'sim', id?: 'A'|'B', sampleRate?, ua? }
+  // airspace simulator -> server (tools/mock-airspace.js)
+  AIRSPACE: 'airspace', // { simTime, loop, aircraft[], perspectives: { A, B }, pair } — see tools/sim/airspace.js
   // phone -> server
   MOTION: 'motion', // { ts, alpha, beta, gamma, heading, headingAcc, ax, ay, az, rotRate }
   GPS: 'gps', // { ts, lat, lon, alt, acc, altAcc }

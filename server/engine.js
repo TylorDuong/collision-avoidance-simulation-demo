@@ -1,9 +1,11 @@
 // Transport-independent core: per-phone state, ranging, fusion, collision and the
 // dashboard state snapshot. The WebSocket layer (index.js) and tests drive it.
+// While a simulated airspace is streaming (tools/mock-airspace.js), it takes over: its
+// A–B pair drives the threat and its TCAS pictures are the dashboard's perspectives.
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { MSG, PHONE_IDS } from '../shared/protocol.js';
+import { MSG, PHONE_IDS, THREAT } from '../shared/protocol.js';
 import { RangingSession } from './ranging/session.js';
 import { solveK } from './ranging/beepbeep.js';
 import { RangeFilter } from './fusion/rangeFilter.js';
@@ -65,6 +67,7 @@ export class Engine {
     this.lastPingAt = -Infinity;
     this.threat = { threat: 'other', level: 0, reason: 'no-data', ttc: null };
     this.listeners = { alert: [] };
+    this.airspace = null; // { data, receivedAt } from the airspace simulator
 
     this.ranging = new RangingSession(config.ranging, {
       send: (id, msg) => this._send(id, msg),
@@ -132,6 +135,21 @@ export class Engine {
     if (!this.phones[id].connected) return;
     this.phones[id].rates.audio.hit(this.now());
     this.ranging.pushAudio(id, firstSampleIndex, pcm);
+  }
+
+  // ---- simulated airspace -----------------------------------------------------------
+
+  setAirspace(msg) {
+    if (!msg?.pair || !msg.perspectives?.A || !msg.perspectives?.B || !Array.isArray(msg.aircraft)) return;
+    this.airspace = { data: msg, receivedAt: this.now() };
+  }
+
+  clearAirspace() {
+    this.airspace = null;
+  }
+
+  _airspaceLive(t = this.now()) {
+    return this.airspace !== null && t - this.airspace.receivedAt < this.cfg.airspaceFreshSeconds;
   }
 
   // ---- calibration ----------------------------------------------------------------
@@ -221,26 +239,34 @@ export class Engine {
       for (const id of PHONE_IDS) this._send(id, { t: MSG.PING, s: t * 1000 });
     }
 
-    const { moving } = this._motionState();
-    const est = this.filter.estimate(t, moving);
-    const source = this._rangeSource(t);
-    const valid = est !== null && source !== 'stale';
     const prev = this.threat.threat;
-    this.threat = this.collision.evaluate(
-      { range: est ? est.range : null, closingSpeed: est ? -est.rate : 0, valid },
-      t,
-    );
+    if (this._airspaceLive(t)) {
+      const pair = this.airspace.data.pair;
+      const level = Math.max(0, THREAT.indexOf(pair.threat));
+      this.threat = { threat: THREAT[level], level, reason: 'tau', ttc: pair.tau };
+      this.estimate = { range: pair.range, rate: pair.rangeRate, sigma: null };
+      this.source = 'sim';
+    } else {
+      const { moving } = this._motionState();
+      const est = this.filter.estimate(t, moving);
+      const source = this._rangeSource(t);
+      const valid = est !== null && source !== 'stale';
+      this.threat = this.collision.evaluate(
+        { range: est ? est.range : null, closingSpeed: est ? -est.rate : 0, valid },
+        t,
+      );
+      this.estimate = est;
+      this.source = source;
+    }
     if (this.threat.threat !== prev) {
       for (const id of PHONE_IDS) this._send(id, { t: MSG.ALERT, level: this.threat.threat });
       for (const fn of this.listeners.alert) fn(this.threat, prev);
     }
-    this.estimate = est;
-    this.source = source;
   }
 
   _perspective(ownId, otherId, range, relAlt) {
     return {
-      ownship: { id: ownId, heading: this.phones[ownId].orientation.heading },
+      ownship: { id: ownId, heading: this.phones[ownId].orientation.heading, mode: 'TA/RA' },
       traffic: this.phones[otherId].connected
         ? [
             {
@@ -277,7 +303,17 @@ export class Engine {
       };
     };
     const relAlt = gpsRelativeAltitude(this.phones.A.gps, this.phones.B.gps);
-    const range = est
+    const sim = this._airspaceLive(t) ? this.airspace.data : null;
+    const range = sim
+      ? {
+          range: sim.pair.range,
+          rangeRate: sim.pair.rangeRate,
+          closingSpeed: sim.pair.closingSpeed,
+          sigma: null,
+          ttc: sim.pair.tau,
+          source: 'sim',
+        }
+      : est
       ? {
           range: est.range,
           rangeRate: est.rate,
@@ -291,6 +327,9 @@ export class Engine {
     return {
       t: MSG.STATE,
       serverTime: t * 1000,
+      // 'phones': the two phones' ranging pipeline. 'airspace': the TCAS demo simulator.
+      mode: sim ? 'airspace' : 'phones',
+      airspace: sim ? { simTime: sim.simTime, loop: sim.loop, aircraft: sim.aircraft } : null,
       phones: { A: phoneState('A'), B: phoneState('B') },
       range,
       acoustic: {
@@ -304,10 +343,12 @@ export class Engine {
       threat: { level: this.threat.threat, reason: this.threat.reason },
       // TCAS-style traffic pictures, one per phone: that phone is "own ship", the other is
       // traffic. Range and threat are symmetric; relative altitude flips sign.
-      perspectives: {
-        A: this._perspective('A', 'B', range, relAlt),
-        B: this._perspective('B', 'A', range, relAlt === null ? null : -relAlt),
-      },
+      perspectives: sim
+        ? sim.perspectives
+        : {
+            A: this._perspective('A', 'B', range, relAlt),
+            B: this._perspective('B', 'A', range, relAlt === null ? null : -relAlt),
+          },
       calibration: {
         state: this.calibration.state,
         progress: this.calibration.raws.length / this.cfg.calibration.samples,

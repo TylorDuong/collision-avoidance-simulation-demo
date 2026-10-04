@@ -1,14 +1,27 @@
-// 3D view: phone A at the origin, phone B on +X at the fused distance (bearing is not
-// observable), each with its real orientation. Threat zones are drawn around A.
+// 3D view with two scenes, picked by state.mode:
+//   phones    phone A at the origin, phone B on +X at the fused distance (bearing is not
+//             observable), each with its real orientation. Threat zones are drawn around
+//             A in TCAS colours; B carries its TCAS traffic symbol and data tag as seen
+//             from A.
+//   airspace  the TCAS demo simulator's aircraft (airspace3d.js).
+// The advisory banner comes from the same AdvisoryTracker as the TCAS display (A's view).
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TCAS_COLORS, drawTraffic, drawDataTag } from '../tcas/symbols.js';
+import { AdvisoryTracker } from '../tcas/advisories.js';
+import { createAirspaceLayer, VERTICAL_EXAGGERATION } from './airspace3d.js';
 
 const PHONE_SIZE = { w: 0.072, h: 0.15, d: 0.008 }; // iPhone-sized, metres
 const HEIGHT = 0.12; // phones float slightly above the grid
 const COLORS = { A: 0x3fa7ff, B: 0xc77dff };
 const THREAT_TINT = { other: 0x0b0d10, proximate: 0x0b1416, TA: 0x1f1604, RA: 0x2a0709 };
-const ZONE_COLORS = { proximate: 0x5fd3e6, TA: 0xffb020, RA: 0xff3b3b };
+const ZONE_COLORS = { proximate: TCAS_COLORS.proximate, TA: TCAS_COLORS.TA, RA: TCAS_COLORS.RA };
+const SYMBOL_PX = 44; // B's traffic-symbol label, CSS pixels
+const CAMERA = {
+  phones: { position: [0.9, 2.1, 2.9], target: [0.9, 0, 0] }, // A at the origin through ~2 m on +X
+  airspace: { position: [1.5, 9, 15], target: [0, 1, 0] }, // the ~20 × 20 NM around the encounter
+};
 
 function makePhone(color) {
   const group = new THREE.Group();
@@ -50,12 +63,17 @@ function makeZone(radius, color) {
 
 export function createScene3dView() {
   let root, renderer, scene, camera, controls, labels, banner, hint;
+  let phoneScene, airspace;
+  let mode = null;
   const phones = {};
   const zones = {};
   let line;
   let shownRange = null;
   const tint = new THREE.Color(THREAT_TINT.other);
   const tmp = new THREE.Vector3();
+  const advisories = new AdvisoryTracker();
+  let symbolCanvas = null;
+  let symbolKey = '';
 
   function label(text) {
     const div = document.createElement('div');
@@ -63,6 +81,33 @@ export function createScene3dView() {
     div.textContent = text;
     labels.append(div);
     return div;
+  }
+
+  // Label holding a TCAS traffic symbol + data tag next to the phone id.
+  function symbolLabel(text) {
+    const div = label('');
+    div.classList.add('label3d-symbol');
+    symbolCanvas = document.createElement('canvas');
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    symbolCanvas.width = symbolCanvas.height = SYMBOL_PX * dpr;
+    symbolCanvas.style.width = symbolCanvas.style.height = `${SYMBOL_PX}px`;
+    symbolCanvas.getContext('2d').scale(dpr, dpr);
+    const span = document.createElement('span');
+    span.textContent = text;
+    div.append(symbolCanvas, span);
+    return div;
+  }
+
+  function drawSymbol(t) {
+    const key = t ? `${t.threat}|${t.relAlt?.toFixed(2)}|${t.relAltRate?.toFixed(2)}` : '';
+    if (key === symbolKey) return;
+    symbolKey = key;
+    const ctx = symbolCanvas.getContext('2d');
+    ctx.clearRect(0, 0, SYMBOL_PX, SYMBOL_PX);
+    if (!t) return;
+    const c = SYMBOL_PX / 2;
+    drawTraffic(ctx, c - 4, c, 14, t.threat);
+    drawDataTag(ctx, c - 4, c, 14, t, TCAS_COLORS[t.threat]);
   }
 
   function placeLabel(div, pos, visible = true) {
@@ -96,47 +141,59 @@ export function createScene3dView() {
 
       scene = new THREE.Scene();
       scene.background = tint;
-      camera = new THREE.PerspectiveCamera(45, 1, 0.01, 100);
-      // Frame A at the origin through ~2 m on +X, where B usually is.
-      camera.position.set(0.9, 2.1, 2.9);
+      camera = new THREE.PerspectiveCamera(45, 1, 0.01, 200);
       controls = new OrbitControls(camera, renderer.domElement);
-      controls.target.set(0.9, 0, 0);
       controls.enableDamping = true;
-      controls.update();
 
       scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x101418, 1.6));
       const sun = new THREE.DirectionalLight(0xffffff, 1.4);
       sun.position.set(2, 4, 3);
       scene.add(sun);
 
+      // Phone scene: 10 m grid (0.1 m / 1 m), zones, the two phones.
+      phoneScene = new THREE.Group();
+      scene.add(phoneScene);
       const fine = new THREE.GridHelper(10, 100, 0x1a2028, 0x141920);
       const coarse = new THREE.GridHelper(10, 10, 0x2b3440, 0x2b3440);
       coarse.position.y = 0.0005;
-      scene.add(fine, coarse);
+      phoneScene.add(fine, coarse);
 
       for (const [name, color] of Object.entries(ZONE_COLORS)) {
         zones[name] = makeZone(1, color);
-        scene.add(zones[name]);
+        phoneScene.add(zones[name]);
       }
 
       for (const id of ['A', 'B']) {
         const mesh = makePhone(COLORS[id]);
         mesh.position.set(0, HEIGHT, 0);
-        scene.add(mesh);
-        phones[id] = { mesh, label: label(id), q: new THREE.Quaternion() };
+        phoneScene.add(mesh);
+        phones[id] = { mesh, label: id === 'B' ? symbolLabel(id) : label(id), q: new THREE.Quaternion() };
       }
       line = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(1, 0, 0)]),
         new THREE.LineDashedMaterial({ color: 0xe6e9ee, dashSize: 0.03, gapSize: 0.02 }),
       );
-      scene.add(line);
+      phoneScene.add(line);
       phones.distLabel = label('');
+
+      // Airspace scene: 40 NM grid (2 NM squares) and the simulated aircraft.
+      airspace = createAirspaceLayer(scene, { label });
+      airspace.root.add(new THREE.GridHelper(40, 20, 0x2b3440, 0x1d242c));
       this.resize();
     },
 
-    update(s, dt, { age }) {
+    update(s, dt, { age, now }) {
       if (!renderer) return;
-      const connected = (id) => s?.phones[id]?.connected;
+      const nextMode = s?.mode === 'airspace' ? 'airspace' : 'phones';
+      if (nextMode !== mode) {
+        mode = nextMode;
+        camera.position.set(...CAMERA[mode].position);
+        controls.target.set(...CAMERA[mode].target);
+        controls.update();
+      }
+      const air = mode === 'airspace';
+      phoneScene.visible = !air;
+      const connected = (id) => !air && s?.phones[id]?.connected;
 
       if (s) {
         for (const name of Object.keys(ZONE_COLORS)) zones[name].scale.setScalar(s.zones[name].range);
@@ -163,21 +220,33 @@ export function createScene3dView() {
       line.visible = connected('A') && connected('B') && range !== null;
 
       // Tint the scene toward the threat colour.
-      const level = s && age < 2000 ? s.threat.level : 'other';
+      const fresh = s && age < 2000;
+      const level = fresh ? s.threat.level : 'other';
       tint.lerp(new THREE.Color(THREAT_TINT[level]), 1 - Math.exp(-dt * 8));
-      banner.hidden = level !== 'TA' && level !== 'RA';
-      banner.dataset.level = level;
-      banner.textContent = level === 'RA' ? `TOO CLOSE · ${range?.toFixed(2)} m` : `CAUTION · ${range?.toFixed(2)} m`;
+
+      // TCAS picture with A as own ship: advisory banner + B's symbol.
+      const traffic = fresh ? s.perspectives.A.traffic : [];
+      const { banner: adv } = advisories.update(traffic, now, fresh ? s.perspectives.A.ownship : null);
+      banner.hidden = !adv;
+      if (adv) {
+        banner.dataset.level = adv.level;
+        banner.style.color = adv.color;
+        banner.textContent = adv.text;
+      }
+      drawSymbol(traffic.find((t) => t.id === 'B' && t.range !== null));
 
       hint.textContent = !s
         ? 'Waiting for server…'
-        : !connected('A') || !connected('B')
+        : air
+          ? `Drag to orbit · scroll to zoom · grid squares are 2 NM · altitudes ×${VERTICAL_EXAGGERATION}`
+          : !connected('A') || !connected('B')
           ? `Waiting for phone${!connected('A') && !connected('B') ? 's A and B' : !connected('A') ? ' A' : ' B'}… (or run npm run mock)`
           : range === null
-            ? 'Phones connected; waiting for the first acoustic range…'
+            ? 'Phones connected; waiting for the first range…'
             : 'Drag to orbit · scroll to zoom · B is drawn on +X (bearing unknown)';
 
       controls.update();
+      airspace.update(air ? s : null, dt, placeLabel); // a stale feed keeps its last picture
       renderer.render(scene, camera);
 
       for (const id of ['A', 'B']) {
