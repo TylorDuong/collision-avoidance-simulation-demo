@@ -463,7 +463,7 @@ export function createTcasView({ ownId = 'A' } = {}) {
     text(tcasMode === 'STBY' ? 'TCAS STBY' : tcasMode, 16 + ctx.measureText(`${ownId} POV`).width + fs, H - 70, { color: tcasMode === 'TA/RA' ? TCAS_COLORS.data : TCAS_COLORS.TA, size: fs });
     const sy = H - 44;
     if (stale) text('NO DATA', 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
-    else if (s.mode !== 'airspace' && !s.phones[ownId].connected) text(`OWN SHIP (${ownId}) OFFLINE`, 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
+    else if (s.mode !== 'airspace' && s.range.source !== 'ultrasonic' && !s.phones[ownId].connected) text(`OWN SHIP (${ownId}) OFFLINE`, 16, sy, { color: TCAS_COLORS.TA, size: fs + 1 });
     else if (offscale) text('TRAFFIC', 16, sy, { color: TCAS_COLORS[offscale], size: fs + 1 }); // TA/RA beyond the selected range
     else if (!traffic.length) text('NO TRAFFIC', 16, sy, { color: TCAS_COLORS.dim, size: fs });
     if (s?.mode === 'airspace') text(`REL  ${altFilter}`,16, H - 18, { color: TCAS_COLORS.data, size: fs });

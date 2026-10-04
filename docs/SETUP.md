@@ -235,7 +235,9 @@ The safety timing lives at the top of the sketch:
 
 ---
 
-## Phase 6: Phones
+## Phase 6: Phones (legacy, not needed for the ultrasonic demo)
+
+The dashboard no longer has Phones, Acoustic ranging or Calibration cards, so this phase only works for the `/phone` pages and the server's phone code, not for the dashboard controls. The ultrasonic boards (Phase 5) are the range source now.
 
 1. Connect both iPhones to the laptop hotspot.
 2. Trust the certificate (one time per phone):
@@ -243,12 +245,7 @@ The safety timing lives at the top of the sketch:
    2. Go to **Settings → General → VPN & Device Management**, open the profile and tap **Install**.
    3. Go to **Settings → General → About → Certificate Trust Settings** and turn the mkcert root **on**.
 3. Open `https://192.168.137.1:8443/phone`. Pick **A** on one phone and **B** on the other, tap **Start sensors**, and allow motion, microphone and location.
-4. **Calibrate:**
-   1. Hold the phones side by side, 10 cm apart, with speakers and mics uncovered.
-   2. In the dashboard, press **Calibrate**.
-   3. Wait until it says "calibrated".
-
-**Check:** with no mock running, move the phones together and apart. The dashboard distance follows, and both ESP32s react together.
+4. Calibration needs the old dashboard button, which was removed. The server still accepts a `calibrate` message if you need it.
 
 ---
 
@@ -257,8 +254,7 @@ The safety timing lives at the top of the sketch:
 1. Turn on the laptop **Mobile hotspot**.
 2. Run `npm start`. Its printed addresses should include 192.168.137.1.
 3. Power both ESP32s. Each should show "alert via server" and its peer "alive" on the dashboard.
-4. Connect the phones to the hotspot, open `/phone`, and tap Start.
-5. Open the dashboard and check that the Acoustic ranging success rate is high.
+4. Open the dashboard. The "Ultrasonic ranging" card should show each board's distance in inches, and the Range source should read `ultrasonic`.
 
 ---
 

@@ -25,7 +25,6 @@ const conn = connect({
 });
 const primary = createPrimaryHud($('hud-primary'));
 const diagnostics = createDiagnostics($('diagnostics'), {
-  onCalibrate: (distance) => conn.send({ t: MSG.CALIBRATE, distance }),
   onDeviceTest: (id) => conn.send({ t: MSG.DEVICE_TEST, id, ms: 1000 }),
 });
 

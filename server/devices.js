@@ -8,6 +8,8 @@
 //                   { t: 'applied', level, mechanism, source, peer }   on change + every few s
 //                     source: 'server' | 'peer' | 'none'  (where the board's current alert came from)
 //                     peer:   { id, alive, rssi, ws } | null   (what it hears from its ESP-NOW peer)
+//                   { t: 'range', range }   ultrasonic distance in metres to the other node;
+//                     null = no echo. Feeds the same range filter as the phones (engine.handleRange).
 // server -> device  { t: 'alert', level, range, seq, epoch }  on every threat change + 1 Hz refresh.
 //                     seq increases on every send; epoch identifies this server run, so boards
 //                     can tell a fresher relayed copy from a stale one.
@@ -45,6 +47,8 @@ export function attachDevices({ server, engine, path = '/device', token = null, 
         devices.set(ws, info);
         console.log(`device ${info.id} connected from ${info.ip}`);
         send(ws, alertMsg());
+      } else if (msg.t === MSG.RANGE && devices.has(ws)) {
+        engine.handleRange(info.id, msg);
       } else if (msg.t === MSG.APPLIED && devices.has(ws)) {
         info.applied = msg.level ?? null;
         info.mechanism = !!msg.mechanism;

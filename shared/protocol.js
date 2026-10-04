@@ -35,6 +35,7 @@ export const MSG = {
   // actuator device <-> server (see server/devices.js)
   APPLIED: 'applied', // device -> server { level, mechanism }
   TEST: 'test', // server -> device { ms }
+  RANGE: 'range', // device -> server { range } — ultrasonic distance in metres, null = no echo
 };
 
 export const AUDIO_MAGIC = 0x41;

@@ -63,6 +63,9 @@ export class Engine {
     this.calibrated = false;
     this.calibration = { state: 'idle', target: null, raws: [] };
     this.lastAcoustic = null; // { t, raw, distance, snr }
+    // Ultrasonic boards (ESP32, /device WebSocket): latest reading per board id, and the last
+    // one that went into the filter.
+    this.ultrasonic = { boards: new Map(), last: null }; // boards: id -> { t, range|null }; last: { t, id, range, accepted }
     this.lastGpsUsedAt = -Infinity;
     this.lastPingAt = -Infinity;
     this.threat = { threat: 'other', level: 0, reason: 'no-data', ttc: null };
@@ -135,6 +138,30 @@ export class Engine {
     if (!this.phones[id].connected) return;
     this.phones[id].rates.audio.hit(this.now());
     this.ranging.pushAudio(id, firstSampleIndex, pcm);
+  }
+
+  // ---- ultrasonic boards ------------------------------------------------------------
+
+  /**
+   * One ultrasonic reading from an ESP32 board. Both boards measure the same A–B gap, so each
+   * reading is an independent measurement for the one range filter. `range` is metres; null
+   * (or outside the sensor's limits) means no echo and is recorded but not filtered.
+   */
+  handleRange(id, msg) {
+    const t = this.now();
+    const { minRange, maxRange } = this.cfg.ultrasonic;
+    const r = Number.isFinite(msg.range) ? msg.range : null;
+    const echo = r !== null && r >= minRange && r <= maxRange;
+    this.ultrasonic.boards.set(id, { t, range: echo ? r : null });
+    if (!echo) return;
+    // The boards are moved by hand, so use the moving process noise regardless of the phones.
+    const res = this.filter.update(r, this.cfg.filter.sigmaUltrasonic ** 2, t, { moving: true, still: false });
+    this.ultrasonic.last = { t, id, range: r, accepted: res.accepted };
+  }
+
+  _ultrasonicStatus(b, t) {
+    if (t - b.t > this.cfg.ultrasonic.signalTimeoutSeconds) return 'no-signal';
+    return b.range === null ? 'no-echo' : 'ok';
   }
 
   // ---- simulated airspace -----------------------------------------------------------
@@ -224,6 +251,8 @@ export class Engine {
     if (!this.filter.initialized) return 'none';
     if (t - this.filter.t > this.cfg.filter.staleAfter) return 'stale';
     if (this.lastAcoustic && t - this.lastAcoustic.t < 1) return 'acoustic';
+    const us = this.ultrasonic.last;
+    if (us && us.accepted && t - us.t < this.cfg.ultrasonic.freshSeconds) return 'ultrasonic';
     if (t - this.lastGpsUsedAt < 3) return 'gps';
     return 'predicted';
   }
@@ -267,7 +296,9 @@ export class Engine {
   _perspective(ownId, otherId, range, relAlt) {
     return {
       ownship: { id: ownId, heading: this.phones[ownId].orientation.heading, mode: 'TA/RA' },
-      traffic: this.phones[otherId].connected
+      // Ultrasonic boards stand in for the phones: the other node is traffic whenever a live
+      // ultrasonic range exists, even with no phone connected.
+      traffic: this.phones[otherId].connected || range.source === 'ultrasonic'
         ? [
             {
               id: otherId,
@@ -339,6 +370,17 @@ export class Engine {
         successRate: this.ranging.successRate(),
         lastFailure: this.ranging.stats.lastFailure,
         running: this.ranging.ready(),
+      },
+      ultrasonic: {
+        boards: [...this.ultrasonic.boards].map(([id, b]) => ({
+          id,
+          range: b.range,
+          status: this._ultrasonicStatus(b, t),
+          ageMs: Math.round((t - b.t) * 1000),
+        })),
+        last: this.ultrasonic.last
+          ? { ageMs: Math.round((t - this.ultrasonic.last.t) * 1000), id: this.ultrasonic.last.id, range: this.ultrasonic.last.range, accepted: this.ultrasonic.last.accepted }
+          : null,
       },
       threat: { level: this.threat.threat, reason: this.threat.reason },
       // TCAS-style traffic pictures, one per phone: that phone is "own ship", the other is
