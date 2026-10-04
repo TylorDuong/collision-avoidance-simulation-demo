@@ -1,25 +1,55 @@
-// Side panel: threat, range, acoustic health, per-phone telemetry and calibration.
+// HUD in two parts: primary telemetry pinned in the top bar (threat, range, closing speed,
+// TTC) and the technical diagnostics in the collapsible bottom drawer.
 
-const LEVEL_TEXT = { other: 'CLEAR', proximate: 'PROXIMATE', TA: 'CAUTION · TA', RA: 'DANGER · RA' };
+const LEVEL_TEXT = { other: 'OTHER', proximate: 'PROXIMATE', TA: 'TA', RA: 'RA' };
 const REASON_TEXT = { range: 'inside distance threshold', ttc: 'time-to-collision threshold', 'no-data': 'no range data' };
+const STALE_MS = 2000;
 
-const fmt = (v, digits = 2, unit = '') => (v === null || v === undefined || Number.isNaN(v) ? '—' : `${v.toFixed(digits)}${unit}`);
+const fmt = (v, digits = 2, unit = '') => {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—';
+  const text = v.toFixed(digits);
+  return `${Number(text) === 0 ? (0).toFixed(digits) : text}${unit}`; // no "-0.00"
+};
 
-export function createHud(root, { onCalibrate, onDeviceTest }) {
+function bind(root) {
+  const el = {};
+  for (const node of root.querySelectorAll('[data-k]')) el[node.dataset.k] = node;
+  const set = (k, text) => {
+    if (el[k].textContent !== text) el[k].textContent = text;
+  };
+  return { el, set };
+}
+
+export function createPrimaryHud(root) {
   root.innerHTML = `
-    <section class="card threat" data-level="other">
-      <h2>Threat</h2>
-      <div class="level" data-k="level">—</div>
-      <div class="reason" data-k="reason"></div>
-      <div class="big"><span data-k="range">—</span><small>m</small></div>
-    </section>
+    <div class="metric threat" data-level="other"><span class="k">Threat</span><span class="v" data-k="level">—</span></div>
+    <div class="metric"><span class="k">Range</span><span class="v" data-k="range">—</span></div>
+    <div class="metric"><span class="k">Closing</span><span class="v" data-k="closing">—</span></div>
+    <div class="metric"><span class="k">TTC</span><span class="v" data-k="ttc">—</span></div>`;
+  const { el, set } = bind(root);
+  const threat = root.querySelector('.threat');
+
+  return {
+    update(s, age) {
+      if (!s) return;
+      const stale = age > STALE_MS;
+      threat.dataset.level = stale ? 'stale' : s.threat.level;
+      set('level', stale ? 'NO DATA' : LEVEL_TEXT[s.threat.level]);
+      set('range', fmt(s.range.range, 2, ' m'));
+      set('closing', fmt(s.range.closingSpeed, 2, ' m/s'));
+      set('ttc', s.range.ttc === null ? '—' : fmt(s.range.ttc, 1, ' s'));
+    },
+  };
+}
+
+export function createDiagnostics(root, { onCalibrate, onDeviceTest }) {
+  root.innerHTML = `
     <section class="card">
       <h2>Range</h2>
       <dl class="kv">
         <dt>Source</dt><dd><span class="badge" data-k="source">—</span></dd>
         <dt>Uncertainty</dt><dd data-k="sigma">—</dd>
-        <dt>Closing speed</dt><dd data-k="closing">—</dd>
-        <dt>Time to collision</dt><dd data-k="ttc">—</dd>
+        <dt>Threat reason</dt><dd data-k="reason">—</dd>
       </dl>
     </section>
     <section class="card">
@@ -68,12 +98,7 @@ export function createHud(root, { onCalibrate, onDeviceTest }) {
       </dl>
     </section>`;
 
-  const el = {};
-  for (const node of root.querySelectorAll('[data-k]')) el[node.dataset.k] = node;
-  const threatCard = root.querySelector('.threat');
-  const set = (k, text) => {
-    if (el[k].textContent !== text) el[k].textContent = text;
-  };
+  const { el, set } = bind(root);
 
   el['cal-btn'].addEventListener('click', () => onCalibrate(Number(el['cal-d'].value)));
   el.devices.addEventListener('click', (e) => {
@@ -127,17 +152,12 @@ export function createHud(root, { onCalibrate, onDeviceTest }) {
   return {
     update(s, age) {
       if (!s) return;
-      const stale = age > 2000;
-      threatCard.dataset.level = stale ? 'other' : s.threat.level;
-      set('level', stale ? 'NO DATA' : LEVEL_TEXT[s.threat.level]);
-      set('reason', stale ? 'server state is stale' : REASON_TEXT[s.threat.reason] ?? '');
-      set('range', fmt(s.range.range, 2));
+      const stale = age > STALE_MS;
 
       el.source.dataset.v = s.range.source;
       set('source', s.range.source);
       set('sigma', s.range.sigma === null ? '—' : `±${fmt(s.range.sigma * 100, 1)} cm`);
-      set('closing', fmt(s.range.closingSpeed, 2, ' m/s'));
-      set('ttc', s.range.ttc === null ? '—' : fmt(s.range.ttc, 1, ' s'));
+      set('reason', stale ? 'server state is stale' : REASON_TEXT[s.threat.reason] ?? '—');
 
       const ac = s.acoustic;
       set('ac-run', ac.running ? 'running' : 'waiting for both phones');

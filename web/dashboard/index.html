@@ -11,14 +11,21 @@
   </head>
   <body>
     <header id="topbar">
-      <div class="brand">Proximity<span>Demo</span></div>
-      <nav id="tabs" role="tablist" aria-label="Views"></nav>
+      <div id="hud-primary" aria-label="Primary telemetry"></div>
       <div id="conn" class="pill" data-status="connecting">connecting</div>
     </header>
-    <div id="layout">
-      <section id="view" aria-live="off"></section>
-      <aside id="hud"></aside>
-    </div>
+    <main id="cockpit">
+      <section class="display" aria-label="A POV">
+        <div id="tcas-mount-a" class="tcas-mount"></div>
+      </section>
+      <section class="display" aria-label="B POV">
+        <div id="tcas-mount-b" class="tcas-mount"></div>
+      </section>
+    </main>
+    <details id="hud-drawer" open>
+      <summary>Diagnostics</summary>
+      <div id="diagnostics"></div>
+    </details>
     <script type="module" src="./main.js"></script>
   </body>
 </html>
